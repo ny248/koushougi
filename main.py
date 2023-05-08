@@ -3,11 +3,20 @@ import tkinter as tk
 size = 40
 padding = 50
 lines = 19
-
+turn = 0
 class board:
     def on_click(self, event):
         position = (round((event.x - padding) / size), round((event.y - padding) / size))
-        
+        if not self.pieces[position[0]][position[1]] is None and self.pieces[position[0]][position[1]].owner == turn:
+            self.selected = self.pieces[position[0]][position[1]]
+        elif position in self.movable:
+            print("the piece will move there")
+        else:
+            self.selected = None
+        self.calculate_movable()
+    def calculate_movable(self):
+        print("To be made")
+
     def __init__(self, root):
         self.canvas =tk.Canvas(root, bg = "#eecc99")
         self.canvas.pack(fill = tk.BOTH, expand = True)
