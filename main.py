@@ -5,6 +5,9 @@ padding = 50
 lines = 19
 
 class board:
+    def on_click(self, event):
+        position = (round((event.x - padding) / size), round((event.y - padding) / size))
+        
     def __init__(self, root):
         self.canvas =tk.Canvas(root, bg = "#eecc99")
         self.canvas.pack(fill = tk.BOTH, expand = True)
@@ -12,6 +15,7 @@ class board:
             self.canvas.create_line(padding + size * i, padding, padding + size * i, padding + size * (lines - 1), fill = "#000000", width = 1)
             self.canvas.create_line(padding, padding + size * i,  padding + size * (lines - 1), padding + size * i, fill = "#000000", width = 1)
         self.pieces = [[None for i in range(lines)] for j in range(lines)]
+        self.canvas.bind("<Button-1>", self.on_click)
     def draw(self):
         for i in range(lines):
             for j in range(lines):
@@ -49,6 +53,8 @@ class piece:
         self.image_id = None
         self.text_id = None
         board.pieces[position[0]][position[1]] = self
+    def movements(self):
+        print(self.position)
     
 
 
