@@ -1,0 +1,22 @@
+id: 27
+name: "馬兵"
+reading: "ばへい"
+
+move:
+  steps: 1
+  cells:
+    - [1, 2]
+    - [-1, 2]
+    - [1, -2]
+    - [-1, -2]
+    - [2, 1]
+    - [-2, 1]
+    - [2, -1]
+    - [-2, -1]
+  jump: true
+
+promote:
+  to: 21
+  on:
+    - zone: true
+    - capture: [22]

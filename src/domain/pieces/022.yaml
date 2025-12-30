@@ -1,0 +1,25 @@
+id: 22
+name: "仏狼機"
+reading: "ぶつろうき"
+
+move:
+  steps: 1
+  cells:
+    - [1, 1]
+    - [-1, 1]
+    - [1, -1]
+    - [-1, -1]
+  jump: false
+
+shoot:
+  range: 7
+  count: 2
+  penetrate: false
+  immune: [57, 31, 44]
+  min_range:
+    44: 6
+
+promote:
+  to: 54
+  on:
+    - zone: true

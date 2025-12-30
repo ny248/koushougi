@@ -1,0 +1,11 @@
+id: 40
+name: "副司"
+reading: "ふくし"
+
+move:
+  steps: 1
+  cells:
+    - [0, 1, -1]
+    - [1, 1, -1]
+    - [-1, 1, -1]
+  jump: false

@@ -1,0 +1,31 @@
+id: 11
+name: "神僧"
+reading: "しんそう"
+
+move:
+  steps: 1
+  cells:
+    - [0, 2]
+    - [0, -2]
+    - [2, 0]
+    - [-2, 0]
+    - [2, 2]
+    - [-2, 2]
+    - [2, -2]
+    - [-2, -2]
+  slide: false
+  jump: true
+
+shoot:
+  range: 1
+  count: 1
+  penetrate: true
+  immune: []
+
+restrict:
+  only_capture: [10, 11]
+
+promote:
+  to: 45
+  on:
+    - zone: true

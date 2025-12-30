@@ -1,0 +1,21 @@
+id: 32
+name: "車"
+reading: "しゃ"
+
+move:
+  steps: 1
+  cells:
+    - [0, 1, 5]
+    - [0, -1, 5]
+    - [1, 0, 5]
+    - [-1, 0, 5]
+  jump: false
+
+restrict:
+  no_capture: [57]
+  no_shot_by: [24, 25, 51, 52]
+
+promote:
+  to: 33
+  on:
+    - zone: true

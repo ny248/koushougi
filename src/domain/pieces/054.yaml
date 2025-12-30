@@ -1,0 +1,23 @@
+id: 54
+name: "神機車"
+reading: "しんきしゃ"
+
+move:
+  steps: 1
+  cells:
+    - [0, 1, 5]
+    - [0, -1, 5]
+    - [1, 0, 5]
+    - [-1, 0, 5]
+  jump: false
+
+shoot:
+  range: 7
+  count: 2
+  penetrate: false
+  immune: [57]
+  min_range:
+    44: 6
+
+restrict:
+  no_capture: [57]

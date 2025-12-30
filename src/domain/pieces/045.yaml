@@ -1,0 +1,30 @@
+id: 45
+name: "聖燈"
+reading: "しょうとう"
+
+move:
+  steps: 2
+  cells:
+    - [0, 2]
+    - [0, -2]
+    - [2, 0]
+    - [-2, 0]
+    - [2, 2]
+    - [-2, 2]
+    - [2, -2]
+    - [-2, -2]
+  jump: true
+
+shoot:
+  range: 1
+  count: 2
+  penetrate: true
+  immune: []
+
+restrict:
+  only_capture: [10, 11]
+
+aura:
+  target: 44
+  range: 5
+  effect: revert_to_10

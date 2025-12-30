@@ -1,0 +1,23 @@
+id: 53
+name: "砲車"
+reading: "ほうしゃ"
+
+move:
+  steps: 1
+  cells:
+    - [0, 1, 5]
+    - [0, -1, 5]
+    - [1, 0, 5]
+    - [-1, 0, 5]
+  jump: false
+
+shoot:
+  range: 5
+  count: 1
+  penetrate: true
+  penetrate_block: [31, 57]
+  immune: [57]
+
+restrict:
+  no_capture: [57]
+  no_shot_by: [24, 25, 51, 52]

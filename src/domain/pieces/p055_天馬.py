@@ -1,0 +1,17 @@
+"""天馬（てんば）- ID: 55 - 騎総の成り、二著する駒"""
+
+from .utils import lion_moves
+
+ID = 55
+NAME = "天馬"
+READING = "てんば"
+
+# 馬兵と同じ（桂馬飛び8方向）
+DIRECTIONS = [
+    (1, 2), (-1, 2), (1, -2), (-1, -2),
+    (2, 1), (-2, 1), (2, -1), (-2, -1),
+]
+
+
+def get_moves(pos, board, player):
+    return lion_moves(pos, DIRECTIONS, board, player, jump=True)

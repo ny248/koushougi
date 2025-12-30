@@ -1,0 +1,22 @@
+id: 52
+name: "弩騎"
+reading: "どき"
+
+move:
+  steps: 1
+  cells:
+    - [1, 2]
+    - [-1, 2]
+    - [1, -2]
+    - [-1, -2]
+    - [2, 1]
+    - [-2, 1]
+    - [2, -1]
+    - [-2, -1]
+  jump: true
+
+shoot:
+  range: 5
+  count: 1
+  penetrate: false
+  immune: [57, 30, 31, 32, 33, 53, 44]

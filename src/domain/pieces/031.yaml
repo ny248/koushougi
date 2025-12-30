@@ -1,0 +1,22 @@
+id: 31
+name: "牌総"
+reading: "はいそう"
+
+move:
+  steps: 1
+  cells:
+    - [1, 0, -1]
+    - [-1, 0, -1]
+    - [1, 1]
+    - [-1, 1]
+    - [1, -1]
+    - [-1, -1]
+  jump: false
+
+restrict:
+  no_shot_by: [24, 25, 51, 52, 26, 53, 22, 54]
+
+promote:
+  to: 57
+  on:
+    - zone: true

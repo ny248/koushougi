@@ -1,0 +1,24 @@
+id: 26
+name: "砲"
+reading: "ほう"
+
+move:
+  steps: 1
+  cells:
+    - [1, 1]
+    - [-1, 1]
+    - [1, -1]
+    - [-1, -1]
+  jump: false
+
+shoot:
+  range: 5
+  count: 1
+  penetrate: true
+  penetrate_block: [31, 57]
+  immune: [57, 31, 44]
+
+promote:
+  to: 53
+  on:
+    - zone: true

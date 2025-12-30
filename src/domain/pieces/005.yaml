@@ -1,0 +1,17 @@
+id: 5
+name: "力士"
+reading: "りきし"
+
+move:
+  steps: 2
+  cells:
+    - [0, 1]
+    - [0, -1]
+    - [1, 0]
+    - [-1, 0]
+    - [1, 1]
+    - [-1, 1]
+    - [1, -1]
+    - [-1, -1]
+  slide: false
+  jump: false

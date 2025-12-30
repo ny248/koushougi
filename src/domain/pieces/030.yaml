@@ -1,0 +1,22 @@
+id: 30
+name: "牌"
+reading: "はい"
+
+move:
+  steps: 1
+  cells:
+    - [1, 1]
+    - [-1, 1]
+    - [1, -1]
+    - [-1, -1]
+  jump: false
+
+restrict:
+  no_shot_by: [24, 25, 51, 52]
+
+promote:
+  to: 31
+  on:
+    - zone: true
+    - capture: [1, 14, 16, 15]
+    - capture: [5, 48, 47, 46]

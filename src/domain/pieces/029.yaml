@@ -1,0 +1,17 @@
+id: 29
+name: "歩総"
+reading: "ぶそう"
+
+move:
+  steps: 1
+  cells:
+    - [0, 1, -1]
+    - [0, -1, -1]
+    - [1, 0]
+    - [-1, 0]
+  jump: false
+
+promote:
+  to: 56
+  on:
+    - zone: true
