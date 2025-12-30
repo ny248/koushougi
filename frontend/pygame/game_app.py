@@ -3,8 +3,16 @@
 import pygame
 import sys
 from typing import Optional
+from enum import Enum
 from backend.rules.game_engine import GameEngine
 from frontend.pygame.renderer import BoardRenderer, InfoPanel
+from frontend.pygame.menu import MenuScreen, GameConfig, PlayerType
+from ai import RandomPlayer
+
+
+class AppState(Enum):
+    MENU = "menu"
+    PLAYING = "playing"
 
 
 class GameApp:
@@ -35,8 +43,19 @@ class GameApp:
         )
         self.panel_surface = pygame.Surface((panel_width, panel_height))
 
+        # メニュー画面
+        self.menu = MenuScreen(window_width, window_height)
+        self.menu.init_fonts()
+
+        # アプリ状態
+        self.app_state = AppState.MENU
+        self.config: Optional[GameConfig] = None
+
         # ゲームエンジン
         self.engine = GameEngine()
+
+        # AI
+        self.ai = RandomPlayer()
 
         # UI状態
         self.selected_pos: Optional[tuple[int, int]] = None
@@ -46,6 +65,11 @@ class GameApp:
         self.can_promote = False
         self.pending_move: Optional[tuple[tuple[int, int], tuple[int, int]]] = None
 
+        # AI思考中フラグ
+        self.ai_thinking = False
+        self.ai_delay_timer = 0
+        self.ai_delay_ms = 500  # AI着手までの遅延（ミリ秒）
+
         # クロック
         self.clock = pygame.time.Clock()
 
@@ -53,34 +77,130 @@ class GameApp:
         """メインループ"""
         running = True
         while running:
+            dt = self.clock.tick(60)
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1:  # 左クリック
-                        self.handle_click(event.pos)
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_r:  # リセット
-                        self.reset_game()
-                    elif event.key == pygame.K_y and self.can_promote:
-                        # 成る
-                        self.confirm_move(promote=True)
-                    elif event.key == pygame.K_n and self.can_promote:
-                        # 成らない
-                        self.confirm_move(promote=False)
-                    elif event.key == pygame.K_s and self.shoot_targets:
-                        # 射撃スキップ
-                        self.skip_shoot()
+                elif self.app_state == AppState.MENU:
+                    config = self.menu.handle_event(event)
+                    if config:
+                        self.start_game(config)
+                elif self.app_state == AppState.PLAYING:
+                    self.handle_game_event(event)
+
+            # AI処理
+            if self.app_state == AppState.PLAYING:
+                self.update_ai(dt)
 
             self.draw()
             pygame.display.flip()
-            self.clock.tick(60)
 
         pygame.quit()
         sys.exit()
 
+    def start_game(self, config: GameConfig):
+        """ゲーム開始"""
+        self.config = config
+        self.engine = GameEngine()
+        self.clear_selection()
+        self.shoot_targets = []
+        self.can_promote = False
+        self.pending_move = None
+        self.app_state = AppState.PLAYING
+        self.ai_thinking = False
+        self.ai_delay_timer = 0
+
+        # 開始時のステータス
+        sente_str = "人間" if config.sente_type == PlayerType.HUMAN else "AI"
+        gote_str = "人間" if config.gote_type == PlayerType.HUMAN else "AI"
+        self.status_text = f"先手:{sente_str} vs 後手:{gote_str}"
+
+    def is_human_turn(self) -> bool:
+        """現在の手番が人間かどうか"""
+        if self.config is None:
+            return True
+        player = self.engine.current_player
+        if player == 0:
+            return self.config.sente_type == PlayerType.HUMAN
+        else:
+            return self.config.gote_type == PlayerType.HUMAN
+
+    def update_ai(self, dt: int):
+        """AI処理の更新"""
+        if self.engine.is_game_over:
+            return
+
+        if self.is_human_turn():
+            self.ai_thinking = False
+            return
+
+        # 成り選択待ち中はAI処理しない（人間の操作待ち）
+        if self.can_promote:
+            return
+
+        # AI思考開始
+        if not self.ai_thinking:
+            self.ai_thinking = True
+            self.ai_delay_timer = 0
+            turn_name = "先手" if self.engine.current_player == 0 else "後手"
+            self.status_text = f"{turn_name}(AI)思考中..."
+
+        # 遅延タイマー
+        self.ai_delay_timer += dt
+        if self.ai_delay_timer < self.ai_delay_ms:
+            return
+
+        # 射撃待ち状態
+        if self.shoot_targets:
+            target = self.ai.choose_shoot(self.engine, self.shoot_targets)
+            if target:
+                self.execute_shoot(target)
+            else:
+                self.skip_shoot()
+            self.ai_thinking = False
+            self.ai_delay_timer = 0
+            return
+
+        # 通常移動
+        move = self.ai.choose_move(self.engine)
+        if move:
+            from_pos = move["from"]
+            to_pos = move["to"]
+            promote = move.get("promote", False)
+            self.execute_move(from_pos, to_pos, promote)
+
+        self.ai_thinking = False
+        self.ai_delay_timer = 0
+
+    def handle_game_event(self, event: pygame.event.Event):
+        """ゲーム中のイベント処理"""
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:  # 左クリック
+                self.handle_click(event.pos)
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                # メニューに戻る
+                self.app_state = AppState.MENU
+            elif event.key == pygame.K_r:  # リセット
+                if self.config:
+                    self.start_game(self.config)
+            elif event.key == pygame.K_y and self.can_promote:
+                # 成る
+                self.confirm_move(promote=True)
+            elif event.key == pygame.K_n and self.can_promote:
+                # 成らない
+                self.confirm_move(promote=False)
+            elif event.key == pygame.K_s and self.shoot_targets and self.is_human_turn():
+                # 射撃スキップ
+                self.skip_shoot()
+
     def handle_click(self, pixel_pos: tuple[int, int]):
         """クリック処理"""
+        # 人間の番でなければ無視
+        if not self.is_human_turn():
+            return
+
         # ゲーム終了時は無視
         if self.engine.is_game_over:
             return
@@ -193,7 +313,10 @@ class GameApp:
             # 射撃待ち
             if result.after_effect and "shoot" in result.after_effect:
                 self.shoot_targets = self.engine.get_shoot_targets() or []
-                status_parts.append("射撃先を選択（Sでスキップ）")
+                if self.is_human_turn():
+                    status_parts.append("射撃先を選択（Sでスキップ）")
+                else:
+                    status_parts.append("AI射撃中...")
 
             # 勝敗
             if result.winner is not None:
@@ -207,23 +330,25 @@ class GameApp:
     def handle_shoot_click(self, pos: tuple[int, int]):
         """射撃クリック処理"""
         if pos in self.shoot_targets:
-            # 射撃実行
-            result = self.engine.shoot([pos])
-            self.shoot_targets = []
-
-            if result.success:
-                status_parts = []
-                if result.path_kills:
-                    status_parts.append(f"{len(result.path_kills)}体撃破")
-                if result.winner is not None:
-                    winner_name = "先手" if result.winner == 0 else "後手"
-                    status_parts.append(f"{winner_name}の勝ち！")
-                self.status_text = " / ".join(status_parts) if status_parts else ""
-            else:
-                self.status_text = result.error or "射撃失敗"
+            self.execute_shoot(pos)
         else:
-            # 射撃対象外
             self.status_text = "射撃できない位置です"
+
+    def execute_shoot(self, pos: tuple[int, int]):
+        """射撃実行"""
+        result = self.engine.shoot([pos])
+        self.shoot_targets = []
+
+        if result.success:
+            status_parts = []
+            if result.path_kills:
+                status_parts.append(f"{len(result.path_kills)}体撃破")
+            if result.winner is not None:
+                winner_name = "先手" if result.winner == 0 else "後手"
+                status_parts.append(f"{winner_name}の勝ち！")
+            self.status_text = " / ".join(status_parts) if status_parts else ""
+        else:
+            self.status_text = result.error or "射撃失敗"
 
     def skip_shoot(self):
         """射撃スキップ"""
@@ -235,36 +360,29 @@ class GameApp:
         """選択解除"""
         self.selected_pos = None
         self.legal_moves = []
-        self.status_text = ""
-
-    def reset_game(self):
-        """ゲームリセット"""
-        self.engine = GameEngine()
-        self.clear_selection()
-        self.shoot_targets = []
-        self.can_promote = False
-        self.pending_move = None
-        self.status_text = "ゲームリセット"
 
     def draw(self):
         """描画"""
-        # 盤面描画
-        self.board_renderer.draw_state(
-            self.board_surface,
-            self.engine.state,
-            selected=self.selected_pos,
-            move_targets=self.legal_moves if not self.shoot_targets else None,
-            shoot_targets=self.shoot_targets,
-        )
-        self.screen.blit(self.board_surface, (0, 0))
+        if self.app_state == AppState.MENU:
+            self.menu.draw(self.screen)
+        else:
+            # 盤面描画
+            self.board_renderer.draw_state(
+                self.board_surface,
+                self.engine.state,
+                selected=self.selected_pos,
+                move_targets=self.legal_moves if not self.shoot_targets else None,
+                shoot_targets=self.shoot_targets,
+            )
+            self.screen.blit(self.board_surface, (0, 0))
 
-        # 情報パネル
-        self.info_panel.draw(
-            self.panel_surface,
-            self.engine.state,
-            self.status_text,
-        )
-        self.screen.blit(self.panel_surface, (self.board_renderer.surface_size, 0))
+            # 情報パネル
+            self.info_panel.draw(
+                self.panel_surface,
+                self.engine.state,
+                self.status_text,
+            )
+            self.screen.blit(self.panel_surface, (self.board_renderer.surface_size, 0))
 
 
 def main():
