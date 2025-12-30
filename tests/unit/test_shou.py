@@ -1,8 +1,8 @@
 """将のテスト"""
 
 import pytest
-from src.domain.board import Board
-from src.domain.pieces import p001_将 as shou
+from backend.domain.board import Board
+from backend.domain.pieces import p001_将 as shou
 
 
 class TestShouMoves:

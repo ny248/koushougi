@@ -1,9 +1,9 @@
 """ゲームエンジンのテスト"""
 
 import pytest
-from src.domain.board import Board
-from src.domain.game_state import GameState, create_initial_state
-from src.rules.game_engine import GameEngine
+from backend.domain.board import Board
+from backend.domain.game_state import GameState, create_initial_state
+from backend.rules.game_engine import GameEngine
 
 
 class TestGameEngineBasic:

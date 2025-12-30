@@ -1,11 +1,11 @@
 """基本的な駒のテスト"""
 
 import pytest
-from src.domain.board import Board
-from src.domain.pieces import p014_中軍 as chugun
-from src.domain.pieces import p035_帥 as sui
-from src.domain.pieces import p004_親兵 as shinpei
-from src.domain.pieces import p019_護兵 as gohei
+from backend.domain.board import Board
+from backend.domain.pieces import p014_中軍 as chugun
+from backend.domain.pieces import p035_帥 as sui
+from backend.domain.pieces import p004_親兵 as shinpei
+from backend.domain.pieces import p019_護兵 as gohei
 
 
 class TestChugun:
