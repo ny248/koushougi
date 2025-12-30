@@ -52,3 +52,8 @@ The project uses Python with tkinter (standard library) for GUI. No external dep
 - **Language**: Python
 - **Efficiency**: Minimize web access, store data locally, avoid redundant requests
 - **Communication**: Keep concise, confirm before major changes
+
+## Development Notes
+
+- 判断に迷う点や後で見直すべき点は `docs/notes/dev_notes.md` にメモして先に進む
+- ユーティリティやヘルパーは実際の使用場面が明確になってから作成する
