@@ -8,6 +8,7 @@ from backend.rules.game_engine import GameEngine
 from frontend.pygame.renderer import BoardRenderer, InfoPanel
 from frontend.pygame.menu import MenuScreen, GameConfig, PlayerType
 from ai import RandomPlayer
+from config import GUI_AI_DELAY_MS, GUI_CELL_SIZE, GUI_MARGIN, GUI_PANEL_WIDTH
 
 
 class AppState(Enum):
@@ -22,11 +23,11 @@ class GameApp:
         pygame.init()
 
         # レンダラー
-        self.board_renderer = BoardRenderer(cell_size=36, margin=30)
+        self.board_renderer = BoardRenderer(cell_size=GUI_CELL_SIZE, margin=GUI_MARGIN)
         self.board_renderer.init_fonts()
 
         # 情報パネル
-        panel_width = 200
+        panel_width = GUI_PANEL_WIDTH
         panel_height = self.board_renderer.surface_size
         self.info_panel = InfoPanel(panel_width, panel_height)
         self.info_panel.init_fonts()
@@ -68,7 +69,7 @@ class GameApp:
         # AI思考中フラグ
         self.ai_thinking = False
         self.ai_delay_timer = 0
-        self.ai_delay_ms = 500  # AI着手までの遅延（ミリ秒）
+        self.ai_delay_ms = GUI_AI_DELAY_MS
 
         # クロック
         self.clock = pygame.time.Clock()
