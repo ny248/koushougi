@@ -57,3 +57,38 @@ The project uses Python with tkinter (standard library) for GUI. No external dep
 
 - 判断に迷う点や後で見直すべき点は `docs/notes/dev_notes.md` にメモして先に進む
 - ユーティリティやヘルパーは実際の使用場面が明確になってから作成する
+
+## アンチパターン
+
+### 二重管理の禁止
+
+駒の定義（ID、名前、成り先、移動パターンなど）は `backend/domain/` に一元管理されている。
+他の場所で同じ情報を再定義してはならない。
+
+**悪い例:**
+```python
+# ai/greedy/piece_values.py で成り関係を再定義
+PROMOTION_MAP = {
+    1: 35,   # 将 → 帥
+    2: 36,   # 記室 → 軍師
+    ...
+}
+```
+
+**良い例:**
+```python
+# backend/domain/piece_registry から取得
+from backend.domain.piece_registry import get_piece
+
+piece = get_piece(piece_id)
+promoted_id = piece.promotes_to  # 成り先ID
+```
+
+### データの権威ある出典
+
+| データ | 出典 |
+|--------|------|
+| ゲームルール | `GAMERULE.md` |
+| 駒の定義 | `backend/domain/piece_registry.py` |
+| 駒の詳細 | `src/domain/pieces/*.py` |
+| 設定定数 | `config.py` |

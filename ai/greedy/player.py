@@ -4,33 +4,48 @@ import random
 from typing import Optional
 from backend.rules.game_engine import GameEngine
 from ai.base import BaseAI
-from ai.greedy.piece_values import get_piece_value
+from ai.greedy.piece_values import get_piece_value, get_promotion_value
 
 
 class GreedyPlayer(BaseAI):
-    """最も価値の高い駒を取るAI"""
+    """最も価値の高い駒を取るAI（ε-greedy）"""
+
+    def __init__(self, epsilon: float = 0.05):
+        """
+        Args:
+            epsilon: ランダムに手を選ぶ確率（探索用）
+        """
+        self.epsilon = epsilon
 
     def choose_move(self, engine: GameEngine) -> Optional[dict]:
-        """最も価値の高い駒を取れる手を選択"""
+        """最も価値の高い駒を取れる手を選択（ε確率でランダム）"""
         moves = self.get_all_moves(engine)
         if not moves:
             return None
 
+        # ε確率でランダムに選択（探索）
+        if random.random() < self.epsilon:
+            return random.choice(moves)
+
         # 各手の評価値を計算
         scored_moves = []
         for move in moves:
+            from_pos = move["from"]
             to_pos = move["to"]
+            value = 0
+
+            # 駒取りの価値
             target = engine.state.board.get(to_pos[0], to_pos[1])
-
             if target:
-                piece_id, _ = target
-                value = get_piece_value(piece_id)
-            else:
-                value = 0
+                target_id, _ = target
+                value += get_piece_value(target_id)
 
-            # 成りボーナス（成れるなら少し加点）
+            # 成りの価値（成った後の価値 - 成る前の価値）
             if move.get("promote"):
-                value += 10
+                piece_data = engine.state.board.get(from_pos[0], from_pos[1])
+                if piece_data:
+                    piece_id, _ = piece_data
+                    value += get_promotion_value(piece_id)
 
             scored_moves.append((value, move))
 

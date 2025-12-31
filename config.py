@@ -4,7 +4,7 @@
 BOARD_SIZE = 19
 
 # AI対戦設定
-AI_MAX_TURNS = 1000  # 最大ターン数（引き分け判定）
+AI_MAX_TURNS = 2000  # 最大ターン数（引き分け判定）
 
 # GUI設定
 GUI_AI_DELAY_MS = 500  # AIの着手遅延（ミリ秒）
