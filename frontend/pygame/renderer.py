@@ -158,17 +158,12 @@ class BoardRenderer:
         # 盤面
         self.draw_board(surface)
 
-        # 移動先マーカー
+        # 移動先マーカー（駒の下に描画）
         if move_targets:
             for x, y in move_targets:
                 self.draw_marker(surface, x, y, COLOR_MOVE_TARGET)
 
-        # 射撃対象マーカー
-        if shoot_targets:
-            for x, y in shoot_targets:
-                self.draw_marker(surface, x, y, COLOR_SHOOT_TARGET, 0.4)
-
-        # 選択マーカー
+        # 選択マーカー（駒の下に描画）
         if selected:
             self.draw_marker(surface, selected[0], selected[1], COLOR_SELECTED, 0.45)
 
@@ -178,9 +173,14 @@ class BoardRenderer:
                 piece_data = state.board.get(x, y)
                 if piece_data:
                     piece_id, player = piece_data
-                    # 成り駒判定（ID 35以上は成り駒）
-                    is_promoted = piece_id >= 35
+                    # 成り駒判定（盤面のis_promotedフラグを使用）
+                    is_promoted = state.board.get_promoted(x, y)
                     self.draw_piece(surface, x, y, piece_id, player, is_promoted)
+
+        # 射撃対象マーカー（駒の上に描画して見えるように）
+        if shoot_targets:
+            for x, y in shoot_targets:
+                self.draw_marker(surface, x, y, COLOR_SHOOT_TARGET, 0.4)
 
 
 class InfoPanel:
@@ -207,7 +207,7 @@ class InfoPanel:
         self.font = pygame.font.Font(font_path, 18) if font_path else pygame.font.Font(None, 18)
 
     def draw(self, surface: pygame.Surface, state: GameState,
-             status_text: str = ""):
+             status_text: str = "", show_promotion_buttons: bool = False):
         """情報パネルを描画"""
         surface.fill((50, 50, 50))
 
@@ -233,3 +233,36 @@ class InfoPanel:
         if status_text:
             text = self.font.render(status_text, True, (255, 255, 100))
             surface.blit(text, (10, y_offset))
+            y_offset += 30
+
+        # 成り選択ボタン
+        if show_promotion_buttons:
+            y_offset += 20
+            self._draw_button(surface, 10, y_offset, 80, 30, "成る (Y)", (100, 200, 100))
+            self._draw_button(surface, 100, y_offset, 90, 30, "成らない (N)", (200, 100, 100))
+            self.promotion_button_rects = {
+                "promote": pygame.Rect(10, y_offset, 80, 30),
+                "no_promote": pygame.Rect(100, y_offset, 90, 30),
+            }
+        else:
+            self.promotion_button_rects = {}
+
+    def _draw_button(self, surface: pygame.Surface, x: int, y: int,
+                     width: int, height: int, text: str, color: tuple):
+        """ボタンを描画"""
+        pygame.draw.rect(surface, color, (x, y, width, height))
+        pygame.draw.rect(surface, (255, 255, 255), (x, y, width, height), 2)
+        if self.font:
+            text_surface = self.font.render(text, True, (255, 255, 255))
+            text_rect = text_surface.get_rect(center=(x + width // 2, y + height // 2))
+            surface.blit(text_surface, text_rect)
+
+    def get_promotion_click(self, panel_x: int, panel_y: int) -> Optional[bool]:
+        """成りボタンのクリック判定（Trueなら成る、Falseなら成らない、Noneなら無関係）"""
+        if not hasattr(self, 'promotion_button_rects') or not self.promotion_button_rects:
+            return None
+        if self.promotion_button_rects["promote"].collidepoint(panel_x, panel_y):
+            return True
+        if self.promotion_button_rects["no_promote"].collidepoint(panel_x, panel_y):
+            return False
+        return None

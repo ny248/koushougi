@@ -1,13 +1,13 @@
-"""広将棋 GUI アプリケーション"""
+"""広将棋 GUI アプリケーション（フェーズ分離型API対応）"""
 
 import pygame
 import sys
 from typing import Optional
 from enum import Enum
-from backend.rules.game_engine import GameEngine
+from backend.rules.game_engine import GameEngine, GamePhase
 from frontend.pygame.renderer import BoardRenderer, InfoPanel
 from frontend.pygame.menu import MenuScreen, GameConfig, PlayerType
-from ai import RandomPlayer
+from ai.minimax.player import MinimaxPlayer
 from config import GUI_AI_DELAY_MS, GUI_CELL_SIZE, GUI_MARGIN, GUI_PANEL_WIDTH
 
 
@@ -55,16 +55,13 @@ class GameApp:
         # ゲームエンジン
         self.engine = GameEngine()
 
-        # AI
-        self.ai = RandomPlayer()
+        # AI (Minimax depth=3)
+        self.ai = MinimaxPlayer(depth=3, max_moves=15)
 
         # UI状態
         self.selected_pos: Optional[tuple[int, int]] = None
         self.legal_moves: list[tuple[int, int]] = []
-        self.shoot_targets: list[tuple[int, int]] = []
         self.status_text = ""
-        self.can_promote = False
-        self.pending_move: Optional[tuple[tuple[int, int], tuple[int, int]]] = None
 
         # AI思考中フラグ
         self.ai_thinking = False
@@ -105,9 +102,6 @@ class GameApp:
         self.config = config
         self.engine = GameEngine()
         self.clear_selection()
-        self.shoot_targets = []
-        self.can_promote = False
-        self.pending_move = None
         self.app_state = AppState.PLAYING
         self.ai_thinking = False
         self.ai_delay_timer = 0
@@ -136,10 +130,6 @@ class GameApp:
             self.ai_thinking = False
             return
 
-        # 成り選択待ち中はAI処理しない（人間の操作待ち）
-        if self.can_promote:
-            return
-
         # AI思考開始
         if not self.ai_thinking:
             self.ai_thinking = True
@@ -152,24 +142,16 @@ class GameApp:
         if self.ai_delay_timer < self.ai_delay_ms:
             return
 
-        # 射撃待ち状態
-        if self.shoot_targets:
-            target = self.ai.choose_shoot(self.engine, self.shoot_targets)
-            if target:
-                self.execute_shoot(target)
-            else:
-                self.skip_shoot()
-            self.ai_thinking = False
-            self.ai_delay_timer = 0
-            return
+        # AIがplay_turnで1ターン分を処理
+        self.ai.play_turn(self.engine)
+        self.clear_selection()
 
-        # 通常移動
-        move = self.ai.choose_move(self.engine)
-        if move:
-            from_pos = move["from"]
-            to_pos = move["to"]
-            promote = move.get("promote", False)
-            self.execute_move(from_pos, to_pos, promote)
+        # 結果表示
+        if self.engine.is_game_over:
+            winner_name = "先手" if self.engine.winner == 0 else "後手"
+            self.status_text = f"{winner_name}の勝ち！"
+        else:
+            self.status_text = ""
 
         self.ai_thinking = False
         self.ai_delay_timer = 0
@@ -186,13 +168,17 @@ class GameApp:
             elif event.key == pygame.K_r:  # リセット
                 if self.config:
                     self.start_game(self.config)
-            elif event.key == pygame.K_y and self.can_promote:
+            elif event.key == pygame.K_u:  # Undo
+                self.engine.undo()
+                self.clear_selection()
+                self.status_text = "Undo"
+            elif event.key == pygame.K_y and self.engine.phase == GamePhase.PROMOTION:
                 # 成る
-                self.confirm_move(promote=True)
-            elif event.key == pygame.K_n and self.can_promote:
+                self.decide_promotion(promote=True)
+            elif event.key == pygame.K_n and self.engine.phase == GamePhase.PROMOTION:
                 # 成らない
-                self.confirm_move(promote=False)
-            elif event.key == pygame.K_s and self.shoot_targets and self.is_human_turn():
+                self.decide_promotion(promote=False)
+            elif event.key == pygame.K_s and self.engine.phase == GamePhase.SHOOTING and self.is_human_turn():
                 # 射撃スキップ
                 self.skip_shoot()
 
@@ -206,8 +192,16 @@ class GameApp:
         if self.engine.is_game_over:
             return
 
-        # 成り選択中は無視
-        if self.can_promote:
+        phase = self.engine.phase
+
+        # 成り選択中はボタンクリックのみ許可
+        if phase == GamePhase.PROMOTION:
+            # パネル領域のクリック判定
+            panel_x = pixel_pos[0] - self.board_renderer.surface_size
+            if panel_x >= 0:
+                result = self.info_panel.get_promotion_click(panel_x, pixel_pos[1])
+                if result is not None:
+                    self.decide_promotion(promote=result)
             return
 
         # 盤面クリック判定
@@ -217,107 +211,94 @@ class GameApp:
             return
 
         # 射撃待ち状態
-        if self.shoot_targets:
+        if phase == GamePhase.SHOOTING:
             self.handle_shoot_click(board_pos)
             return
 
-        # 通常の選択・移動
+        # 駒選択 or 移動先選択
         self.handle_board_click(board_pos)
 
     def handle_board_click(self, pos: tuple[int, int]):
-        """盤面クリック処理"""
+        """盤面クリック処理（駒選択 or 移動先選択）"""
+        phase = self.engine.phase
         piece = self.engine.state.board.get(pos[0], pos[1])
 
-        if self.selected_pos is None:
-            # 選択
+        if phase == GamePhase.PIECE_SELECT:
+            # 駒選択フェーズ
             if piece and piece[1] == self.engine.current_player:
-                self.selected_pos = pos
-                self.legal_moves = self.engine.get_legal_moves(pos)
-                self.status_text = f"選択: ({pos[0]}, {pos[1]})"
-        else:
-            # 移動先クリック
+                if self.engine.select_piece(pos):
+                    self.selected_pos = pos
+                    self.legal_moves = self.engine.get_legal_destinations()
+                    self.status_text = f"選択: ({pos[0]}, {pos[1]})"
+                else:
+                    self.status_text = "その駒は動かせません"
+
+        elif phase == GamePhase.DEST_SELECT:
+            # 移動先選択フェーズ
             if pos in self.legal_moves:
-                # 移動実行（成り判定付き）
-                self.try_move(self.selected_pos, pos)
+                # 移動実行
+                result = self.engine.select_destination(pos)
+                if result.success:
+                    self.handle_move_result(result)
+                else:
+                    self.status_text = result.error or "移動できません"
             elif piece and piece[1] == self.engine.current_player:
-                # 自分の別の駒を選択
-                self.selected_pos = pos
-                self.legal_moves = self.engine.get_legal_moves(pos)
-                self.status_text = f"選択: ({pos[0]}, {pos[1]})"
+                # 別の駒を選択し直す
+                self.engine.cancel_piece_selection()
+                if self.engine.select_piece(pos):
+                    self.selected_pos = pos
+                    self.legal_moves = self.engine.get_legal_destinations()
+                    self.status_text = f"選択: ({pos[0]}, {pos[1]})"
             else:
                 # 選択解除
+                self.engine.cancel_piece_selection()
                 self.clear_selection()
 
-    def try_move(self, from_pos: tuple[int, int], to_pos: tuple[int, int]):
-        """移動を試みる（成り選択が必要な場合は待機）"""
-        # 移動先に駒があるか確認
-        target = self.engine.state.board.get(to_pos[0], to_pos[1])
-        captured_piece = target[0] if target else None
+    def handle_move_result(self, result):
+        """移動結果を処理"""
+        self.clear_selection()
 
-        # 移動元の駒情報を取得
-        piece_data = self.engine.state.board.get(from_pos[0], from_pos[1])
-        if piece_data is None:
+        # 結果表示
+        status_parts = []
+        if result.captured:
+            from backend.domain.piece_registry import get_piece
+            try:
+                name = get_piece(result.captured).name
+                status_parts.append(f"{name}を取った")
+            except:
+                pass
+
+        # 成り判断待ち
+        if self.engine.phase == GamePhase.PROMOTION:
+            self.status_text = "成りますか？ Y: 成る / N: 成らない"
             return
 
-        piece_id, player = piece_data
-        from backend.domain.piece_registry import get_piece
-        piece = get_piece(piece_id)
-
-        # 成りが可能か判定
-        if piece.promotes_to is not None:
-            from backend.rules import promotion
-            can_promote = promotion.can_promote(
-                self.engine.state, from_pos, to_pos, captured_piece, player
-            )
-            if can_promote:
-                # 成り選択待ち
-                self.pending_move = (from_pos, to_pos)
-                self.can_promote = True
-                self.status_text = "成りますか？ Y: 成る / N: 成らない"
-                return
-
-        # 成りなしで移動
-        self.execute_move(from_pos, to_pos, promote=False)
-
-    def confirm_move(self, promote: bool):
-        """成り選択確定"""
-        if self.pending_move is None:
+        # 射撃待ち
+        if self.engine.phase == GamePhase.SHOOTING:
+            self.status_text = "射撃先をクリック（Sでスキップ）"
             return
 
-        from_pos, to_pos = self.pending_move
-        self.pending_move = None
-        self.can_promote = False
-        self.execute_move(from_pos, to_pos, promote=promote)
+        # 勝敗
+        if result.winner is not None:
+            winner_name = "先手" if result.winner == 0 else "後手"
+            status_parts.append(f"{winner_name}の勝ち！")
 
-    def execute_move(self, from_pos: tuple[int, int], to_pos: tuple[int, int],
-                     promote: bool):
-        """移動実行"""
-        result = self.engine.move(from_pos, to_pos, promote=promote)
+        self.status_text = " / ".join(status_parts) if status_parts else ""
 
+    def decide_promotion(self, promote: bool):
+        """成り判断"""
+        result = self.engine.decide_promotion(promote)
         if result.success:
-            self.clear_selection()
-
-            # 結果表示
             status_parts = []
-            if result.captured:
-                from backend.domain.piece_registry import get_piece
-                try:
-                    name = get_piece(result.captured).name
-                    status_parts.append(f"{name}を取った")
-                except:
-                    pass
-            if result.promoted:
+            if promote and result.promoted:
                 status_parts.append("成った！")
             if result.triggered_promotions:
                 status_parts.append(f"連鎖成り×{len(result.triggered_promotions)}")
 
             # 射撃待ち
-            if result.after_effect and "shoot" in result.after_effect:
-                self.shoot_targets = self.engine.get_shoot_targets() or []
-                if self.is_human_turn():
-                    status_parts.append("射撃先を選択（Sでスキップ）")
-                else:
-                    status_parts.append("AI射撃中...")
+            if self.engine.phase == GamePhase.SHOOTING:
+                self.status_text = "射撃先をクリック（Sでスキップ）"
+                return
 
             # 勝敗
             if result.winner is not None:
@@ -326,19 +307,19 @@ class GameApp:
 
             self.status_text = " / ".join(status_parts) if status_parts else ""
         else:
-            self.status_text = result.error or "移動できません"
+            self.status_text = result.error or "エラー"
 
     def handle_shoot_click(self, pos: tuple[int, int]):
         """射撃クリック処理"""
-        if pos in self.shoot_targets:
+        targets = self.engine.get_shoot_targets()
+        if pos in targets:
             self.execute_shoot(pos)
         else:
             self.status_text = "射撃できない位置です"
 
-    def execute_shoot(self, pos: tuple[int, int]):
+    def execute_shoot(self, target: tuple[int, int]):
         """射撃実行"""
-        result = self.engine.shoot([pos])
-        self.shoot_targets = []
+        result = self.engine.shoot(target)
 
         if result.success:
             status_parts = []
@@ -353,8 +334,7 @@ class GameApp:
 
     def skip_shoot(self):
         """射撃スキップ"""
-        result = self.engine.skip_shoot()
-        self.shoot_targets = []
+        self.engine.skip_shoot()
         self.status_text = "射撃をスキップ"
 
     def clear_selection(self):
@@ -367,13 +347,16 @@ class GameApp:
         if self.app_state == AppState.MENU:
             self.menu.draw(self.screen)
         else:
+            phase = self.engine.phase
+            shoot_targets = self.engine.get_shoot_targets() if phase == GamePhase.SHOOTING else []
+
             # 盤面描画
             self.board_renderer.draw_state(
                 self.board_surface,
                 self.engine.state,
                 selected=self.selected_pos,
-                move_targets=self.legal_moves if not self.shoot_targets else None,
-                shoot_targets=self.shoot_targets,
+                move_targets=self.legal_moves if phase == GamePhase.DEST_SELECT else None,
+                shoot_targets=shoot_targets,
             )
             self.screen.blit(self.board_surface, (0, 0))
 
@@ -382,6 +365,7 @@ class GameApp:
                 self.panel_surface,
                 self.engine.state,
                 self.status_text,
+                show_promotion_buttons=(phase == GamePhase.PROMOTION),
             )
             self.screen.blit(self.panel_surface, (self.board_renderer.surface_size, 0))
 
