@@ -148,19 +148,22 @@ def play_nn_turn(engine: GameEngine, nn_player: NeuralPlayer) -> list[PhaseExper
         if not result.success:
             return experiences
 
-    # フェーズ4: 射撃
-    if engine.phase == GamePhase.SHOOTING:
+    # フェーズ4: 射撃（複数回可能）
+    while engine.phase == GamePhase.SHOOTING:
         state = encode_board(engine)
         target = nn_player.choose_shoot_target(engine)
 
         if target:
             shoot_idx = pos_to_index(target[0], target[1])
             experiences.append(PhaseExperience(state, shoot_idx, "shoot"))
-            engine.shoot(target)
+            result = engine.shoot(target)
+            if not result.can_shoot:
+                break
         else:
             # スキップ
             experiences.append(PhaseExperience(state, NUM_SQUARES, "shoot"))
             engine.skip_shoot()
+            break
 
     return experiences
 
