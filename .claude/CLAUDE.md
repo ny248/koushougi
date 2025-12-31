@@ -57,6 +57,7 @@ The project uses Python with tkinter (standard library) for GUI. No external dep
 
 - 判断に迷う点や後で見直すべき点は `docs/notes/dev_notes.md` にメモして先に進む
 - ユーティリティやヘルパーは実際の使用場面が明確になってから作成する
+- 必要だと分かっていながら実装をサボらない。あまりに大変そうならユーザに確認を取る
 
 ## アンチパターン
 
