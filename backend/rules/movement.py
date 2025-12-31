@@ -115,15 +115,13 @@ def execute_move(state: GameState, from_pos: tuple[int, int],
     for kill_pos in path_kills:
         killed_piece = state.board.get(kill_pos[0], kill_pos[1])
         if killed_piece:
-            state.captured.add(player, killed_piece[0])
             state.board.remove(kill_pos[0], kill_pos[1])
-            result["path_kills"].append(killed_piece[0])
+            result["path_kills"].append((kill_pos, killed_piece[0]))
 
     # 移動先の敵を取る
     target = state.board.get(tx, ty)
     if target is not None:
         target_id, _ = target
-        state.captured.add(player, target_id)
         result["captured"] = target_id
 
     # 駒を移動
@@ -139,7 +137,7 @@ def execute_move(state: GameState, from_pos: tuple[int, int],
 
 
 def execute_shoot(state: GameState, shooter_pos: tuple[int, int],
-                  targets: list[tuple[int, int]], player: int) -> list[int]:
+                  targets: list[tuple[int, int]], player: int) -> list[tuple[tuple[int, int], int]]:
     """射撃を実行
 
     Args:
@@ -149,20 +147,19 @@ def execute_shoot(state: GameState, shooter_pos: tuple[int, int],
         player: プレイヤー
 
     Returns:
-        取った駒IDのリスト
+        取った駒のリスト [(位置, 駒ID), ...]
     """
     killed = []
     for target_pos in targets:
         piece = state.board.get(target_pos[0], target_pos[1])
         if piece and piece[1] != player:  # 敵駒のみ
-            state.captured.add(player, piece[0])
             state.board.remove(target_pos[0], target_pos[1])
-            killed.append(piece[0])
+            killed.append((target_pos, piece[0]))
     return killed
 
 
 def execute_area_kill(state: GameState, pos: tuple[int, int],
-                      targets: list[tuple[int, int]], player: int) -> list[int]:
+                      targets: list[tuple[int, int]], player: int) -> list[tuple[tuple[int, int], int]]:
     """周囲破壊を実行（毒火用）
 
     Args:
@@ -172,19 +169,15 @@ def execute_area_kill(state: GameState, pos: tuple[int, int],
         player: プレイヤー
 
     Returns:
-        取った駒IDのリスト
+        取った駒のリスト [(位置, 駒ID), ...]
     """
     killed = []
     for target_pos in targets:
         piece = state.board.get(target_pos[0], target_pos[1])
         if piece:
             # 敵味方問わず破壊
-            if piece[1] != player:
-                state.captured.add(player, piece[0])
-            else:
-                state.captured.add(1 - player, piece[0])  # 相手の取った駒扱い
             state.board.remove(target_pos[0], target_pos[1])
-            killed.append(piece[0])
+            killed.append((target_pos, piece[0]))
     return killed
 
 

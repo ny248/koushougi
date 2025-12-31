@@ -85,7 +85,7 @@ class TestUndo:
         assert engine.pop_state() is False
 
     def test_captured_piece_restored(self):
-        """駒を取った後にundoすると取った駒も復元される"""
+        """駒を取った後にpush/popすると盤面が復元される"""
         engine = GameEngine()
 
         # 先手の先鋒を前進させる
@@ -94,33 +94,27 @@ class TestUndo:
         engine.move((9, 11), (9, 10))
         engine.move((9, 7), (9, 8))
         engine.move((9, 10), (9, 9))
+
+        # 後手が駒を取る前に保存
+        engine.push_state()
+        board_before = [row[:] for row in engine.state.board.grid]
+        player_before = engine.current_player
+
         engine.move((9, 8), (9, 9))  # 後手が先手の先鋒を取る
 
-        # この時点で後手が駒を取っている
-        # 後手の取った駒を確認
-        captured_before = engine.state.captured.get(1).copy()
-
-        # 次の手の前に保存
-        engine.push_state()
-
-        # 先手の何かの手を指す
-        for x in range(19):
-            for y in range(19):
-                piece = engine.state.board.get(x, y)
-                if piece and piece[1] == 0:
-                    legal = engine.get_legal_moves((x, y))
-                    if legal:
-                        engine.move((x, y), legal[0])
-                        break
-            else:
-                continue
-            break
+        # 駒が取られて盤面が変わっている
+        assert engine.state.board.get(9, 9) is not None
+        assert engine.current_player != player_before
 
         # undo
         engine.pop_state()
 
-        # 取った駒リストが変わっていないことを確認
-        assert engine.state.captured.get(1) == captured_before
+        # 盤面が復元されている
+        assert engine.state.board.grid == board_before
+        assert engine.current_player == player_before
+        # 先手の先鋒がまだいる
+        assert engine.state.board.get(9, 9) is not None
+        assert engine.state.board.get(9, 9)[1] == 0  # 先手の駒
 
 
 class TestMinimaxWithUndo:

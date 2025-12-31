@@ -223,37 +223,10 @@ class InfoPanel:
         surface.blit(text, (10, y_offset))
         y_offset += 30
 
-        # 取った駒（後手が取った = 先手の駒）
-        y_offset += 10
-        text = self.font.render("△後手の取った駒:", True, (200, 200, 200))
+        # 手数表示
+        move_text = f"手数: {state.move_count}"
+        text = self.font.render(move_text, True, (200, 200, 200))
         surface.blit(text, (10, y_offset))
-        y_offset += 25
-        captured_gote = state.captured.get(1)
-        if captured_gote:
-            names = []
-            for pid in captured_gote[:10]:  # 最大10個表示
-                try:
-                    names.append(get_piece(pid).name)
-                except:
-                    pass
-            text = self.font.render(" ".join(names), True, (255, 255, 255))
-            surface.blit(text, (10, y_offset))
-        y_offset += 30
-
-        # 取った駒（先手が取った = 後手の駒）
-        text = self.font.render("▲先手の取った駒:", True, (200, 200, 200))
-        surface.blit(text, (10, y_offset))
-        y_offset += 25
-        captured_sente = state.captured.get(0)
-        if captured_sente:
-            names = []
-            for pid in captured_sente[:10]:
-                try:
-                    names.append(get_piece(pid).name)
-                except:
-                    pass
-            text = self.font.render(" ".join(names), True, (255, 255, 255))
-            surface.blit(text, (10, y_offset))
         y_offset += 40
 
         # ステータス
