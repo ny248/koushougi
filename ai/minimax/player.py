@@ -1,8 +1,9 @@
-"""Minimax AI with Alpha-Beta Pruning"""
+"""Minimax AI with Alpha-Beta Pruning（フェーズ分離型）"""
 
 import random
 from typing import Optional
-from backend.rules.game_engine import GameEngine
+from backend.rules.game_engine import GameEngine, GamePhase
+from backend.domain.game_state import create_initial_state
 from ai.base import BaseAI
 from ai.minimax.evaluator import evaluate
 from ai.greedy.piece_values import get_piece_value
@@ -21,16 +22,77 @@ class MinimaxPlayer(BaseAI):
         self.depth = depth
         self.epsilon = epsilon
         self.max_moves = max_moves
+        self._best_destination: Optional[tuple[int, int]] = None
+        self._should_promote: bool = False
 
-    def choose_move(self, engine: GameEngine) -> Optional[dict]:
-        """最善手を選択"""
-        moves = self.get_all_moves(engine)
-        if not moves:
-            return None
-
+    def choose_piece(self, engine: GameEngine) -> tuple[int, int]:
+        """Minimax探索で最善の駒を選択"""
         # ε確率でランダム
         if self.epsilon > 0 and random.random() < self.epsilon:
-            return random.choice(moves)
+            movable = engine.get_movable_pieces()
+            if movable:
+                piece = random.choice(movable)
+                engine.select_piece(piece)
+                dests = engine.get_legal_destinations()
+                engine.cancel_piece_selection()
+                if dests:
+                    self._best_destination = random.choice(dests)
+                    self._should_promote = random.choice([True, False])
+                return piece
+
+        # 全手を評価
+        best_move = self._find_best_move(engine)
+        if best_move:
+            self._best_destination = best_move["to"]
+            self._should_promote = best_move.get("promote", False)
+            return best_move["from"]
+
+        # フォールバック
+        movable = engine.get_movable_pieces()
+        return movable[0] if movable else (0, 0)
+
+    def choose_destination(self, engine: GameEngine) -> tuple[int, int]:
+        """事前に計算した最適な移動先を返す"""
+        if self._best_destination:
+            return self._best_destination
+
+        # フォールバック
+        dests = engine.get_legal_destinations()
+        return random.choice(dests) if dests else (0, 0)
+
+    def choose_promotion(self, engine: GameEngine) -> bool:
+        """成るかどうか"""
+        return self._should_promote
+
+    def choose_shoot_target(self, engine: GameEngine) -> Optional[tuple[int, int]]:
+        """射撃先を選択（最高価値を選択）"""
+        targets = engine.get_shoot_targets()
+        if not targets:
+            return None
+
+        scored_targets = []
+        for pos in targets:
+            target = engine.state.board.get(pos[0], pos[1])
+            if target:
+                piece_id, _ = target
+                value = get_piece_value(piece_id)
+                scored_targets.append((value, pos))
+
+        if not scored_targets:
+            return None
+
+        max_value = max(v for v, _ in scored_targets)
+        if max_value < 20:
+            return None
+
+        best_targets = [p for v, p in scored_targets if v == max_value]
+        return random.choice(best_targets)
+
+    def _find_best_move(self, engine: GameEngine) -> Optional[dict]:
+        """Minimax探索で最善手を見つける"""
+        moves = self._get_all_moves(engine)
+        if not moves:
+            return None
 
         player = engine.current_player
         best_move = None
@@ -60,54 +122,16 @@ class MinimaxPlayer(BaseAI):
 
         return best_move
 
-    def choose_shoot(self, engine: GameEngine, targets: list[tuple[int, int]]) -> Optional[tuple[int, int]]:
-        """射撃先を選択（Greedyと同様に最高価値を選択）"""
-        if not targets:
-            return None
-
-        scored_targets = []
-        for pos in targets:
-            target = engine.state.board.get(pos[0], pos[1])
-            if target:
-                piece_id, _ = target
-                value = get_piece_value(piece_id)
-                scored_targets.append((value, pos))
-
-        if not scored_targets:
-            return None
-
-        max_value = max(v for v, _ in scored_targets)
-        if max_value < 20:
-            return None
-
-        best_targets = [p for v, p in scored_targets if v == max_value]
-        return random.choice(best_targets)
-
     def _minimax(self, engine: GameEngine, depth: int, alpha: float, beta: float,
                  maximizing: bool, original_player: int) -> float:
-        """
-        Minimax with Alpha-Beta Pruning
-
-        Args:
-            engine: 現在の盤面
-            depth: 残り探索深さ
-            alpha: α値（最大化側の下限）
-            beta: β値（最小化側の上限）
-            maximizing: 最大化プレイヤーのターンか
-            original_player: 元のプレイヤー（評価の視点）
-
-        Returns:
-            評価値
-        """
-        # 終端条件
+        """Minimax with Alpha-Beta Pruning"""
         if depth == 0 or engine.is_game_over:
             return evaluate(engine, original_player)
 
-        moves = self.get_all_moves(engine)
+        moves = self._get_all_moves(engine)
         if not moves:
             return evaluate(engine, original_player)
 
-        # 手を評価値でソート（上位のみ探索）
         scored_moves = self._order_moves(engine, moves)[:self.max_moves]
 
         if maximizing:
@@ -121,7 +145,7 @@ class MinimaxPlayer(BaseAI):
 
                 alpha = max(alpha, value)
                 if beta <= alpha:
-                    break  # β枝刈り
+                    break
 
             return value
         else:
@@ -135,9 +159,58 @@ class MinimaxPlayer(BaseAI):
 
                 beta = min(beta, value)
                 if beta <= alpha:
-                    break  # α枝刈り
+                    break
 
             return value
+
+    def _get_all_moves(self, engine: GameEngine) -> list[dict]:
+        """現在のプレイヤーの全合法手を取得"""
+        from backend.rules import promotion
+
+        player = engine.current_player
+        all_moves = []
+
+        for x in range(19):
+            for y in range(19):
+                piece_data = engine.state.board.get(x, y)
+                if piece_data is None:
+                    continue
+                piece_id, owner = piece_data
+                if owner != player:
+                    continue
+
+                from_pos = (x, y)
+                moves = engine.get_legal_moves(from_pos)
+
+                for to_pos in moves:
+                    can_promote = self._can_promote(engine, from_pos, to_pos)
+
+                    if can_promote:
+                        all_moves.append({"from": from_pos, "to": to_pos, "promote": False})
+                        all_moves.append({"from": from_pos, "to": to_pos, "promote": True})
+                    else:
+                        all_moves.append({"from": from_pos, "to": to_pos, "promote": False})
+
+        return all_moves
+
+    def _can_promote(self, engine: GameEngine, from_pos: tuple[int, int], to_pos: tuple[int, int]) -> bool:
+        """成れるか判定"""
+        from backend.domain.piece_registry import get_piece
+        from backend.rules import promotion
+
+        piece_data = engine.state.board.get(from_pos[0], from_pos[1])
+        if piece_data is None:
+            return False
+
+        piece_id, player = piece_data
+        piece = get_piece(piece_id)
+        if piece.promotes_to is None:
+            return False
+
+        target = engine.state.board.get(to_pos[0], to_pos[1])
+        captured_piece = target[0] if target else None
+
+        return promotion.can_promote(engine.state, from_pos, to_pos, captured_piece, player)
 
     def _order_moves(self, engine: GameEngine, moves: list[dict]) -> list[dict]:
         """手を評価値でソート（枝刈り効率化）"""
@@ -147,37 +220,41 @@ class MinimaxPlayer(BaseAI):
             target = engine.state.board.get(to_pos[0], to_pos[1])
             score = 0
 
-            # 駒取りは高評価
             if target:
                 piece_id, _ = target
                 score += get_piece_value(piece_id)
 
-            # 成りも加点
             if move.get("promote"):
                 score += 50
 
             scored.append((score, move))
 
-        # 降順ソート
         scored.sort(reverse=True, key=lambda x: x[0])
         return [m for _, m in scored]
 
     def _apply_move(self, engine: GameEngine, move: dict) -> bool:
-        """手を適用
-
-        Returns:
-            成功したかどうか
-        """
+        """手を適用（フェーズ分離型API使用）"""
         from_pos = move["from"]
         to_pos = move["to"]
         promote = move.get("promote", False)
 
-        result = engine.move(from_pos, to_pos, promote=promote)
+        # 駒選択
+        if not engine.select_piece(from_pos):
+            return False
+
+        # 移動先選択
+        result = engine.select_destination(to_pos)
         if not result.success:
             return False
 
+        # 成り判断
+        if engine.phase == GamePhase.PROMOTION:
+            result = engine.decide_promotion(promote)
+            if not result.success:
+                return False
+
         # 射撃はスキップ（簡略化）
-        if result.can_shoot:
+        if engine.phase == GamePhase.SHOOTING:
             engine.skip_shoot()
 
         return True

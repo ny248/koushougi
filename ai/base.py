@@ -1,84 +1,101 @@
-"""AI基底クラス - GameEngineを直接操作"""
+"""AI基底クラス - フェーズ分離型アーキテクチャ"""
 
 from abc import ABC, abstractmethod
 from typing import Optional
-from backend.rules.game_engine import GameEngine
+from backend.rules.game_engine import GameEngine, GamePhase
 
 
 class BaseAI(ABC):
-    """AI基底クラス"""
+    """AI基底クラス - 各フェーズごとに決定を行う"""
 
     @abstractmethod
-    def choose_move(self, engine: GameEngine) -> Optional[dict]:
-        """
-        手を選択する
+    def choose_piece(self, engine: GameEngine) -> tuple[int, int]:
+        """動かす駒を選択
 
         Args:
-            engine: ゲームエンジン（状態参照用、変更しない）
+            engine: ゲームエンジン（PIECE_SELECTフェーズ）
 
         Returns:
-            選択した手: {"from": (x, y), "to": (x, y), "promote": bool}
-            または None（手なし）
+            選択した駒の位置 (x, y)
         """
         pass
 
     @abstractmethod
-    def choose_shoot(self, engine: GameEngine, targets: list[tuple[int, int]]) -> Optional[tuple[int, int]]:
+    def choose_destination(self, engine: GameEngine) -> tuple[int, int]:
+        """移動先を選択
+
+        Args:
+            engine: ゲームエンジン（DEST_SELECTフェーズ）
+                   engine.selected_piece で選択中の駒位置を取得可能
+
+        Returns:
+            移動先の位置 (x, y)
         """
-        射撃先を選択する
+        pass
+
+    @abstractmethod
+    def choose_promotion(self, engine: GameEngine) -> bool:
+        """成るかどうかを選択
+
+        Args:
+            engine: ゲームエンジン（PROMOTIONフェーズ）
+
+        Returns:
+            成る場合True
+        """
+        pass
+
+    @abstractmethod
+    def choose_shoot_target(self, engine: GameEngine) -> Optional[tuple[int, int]]:
+        """射撃先を選択
+
+        Args:
+            engine: ゲームエンジン（SHOOTINGフェーズ）
+                   engine.get_shoot_targets() で射撃可能位置を取得可能
+
+        Returns:
+            射撃先の位置、またはNone（スキップ）
+        """
+        pass
+
+    def play_turn(self, engine: GameEngine) -> bool:
+        """1ターンをプレイ（フェーズに応じて自動で処理）
 
         Args:
             engine: ゲームエンジン
-            targets: 射撃可能な位置のリスト
 
         Returns:
-            射撃先座標、またはNone（スキップ）
+            ターンが正常に完了したか
         """
-        pass
-
-    def get_all_moves(self, engine: GameEngine) -> list[dict]:
-        """現在のプレイヤーの全合法手を取得"""
-        player = engine.current_player
-        all_moves = []
-
-        for x in range(19):
-            for y in range(19):
-                piece_data = engine.state.board.get(x, y)
-                if piece_data is None:
-                    continue
-                piece_id, owner = piece_data
-                if owner != player:
-                    continue
-
-                from_pos = (x, y)
-                moves = engine.get_legal_moves(from_pos)
-
-                for to_pos in moves:
-                    can_promote = self._can_promote(engine, from_pos, to_pos)
-
-                    if can_promote:
-                        all_moves.append({"from": from_pos, "to": to_pos, "promote": False})
-                        all_moves.append({"from": from_pos, "to": to_pos, "promote": True})
-                    else:
-                        all_moves.append({"from": from_pos, "to": to_pos, "promote": False})
-
-        return all_moves
-
-    def _can_promote(self, engine: GameEngine, from_pos: tuple[int, int], to_pos: tuple[int, int]) -> bool:
-        """成れるか判定"""
-        from backend.domain.piece_registry import get_piece
-        from backend.rules import promotion
-
-        piece_data = engine.state.board.get(from_pos[0], from_pos[1])
-        if piece_data is None:
+        # フェーズ1: 駒選択
+        if engine.phase != GamePhase.PIECE_SELECT:
             return False
 
-        piece_id, player = piece_data
-        piece = get_piece(piece_id)
-        if piece.promotes_to is None:
+        piece_pos = self.choose_piece(engine)
+        if not engine.select_piece(piece_pos):
             return False
 
-        target = engine.state.board.get(to_pos[0], to_pos[1])
-        captured_piece = target[0] if target else None
+        # フェーズ2: 移動先選択
+        dest_pos = self.choose_destination(engine)
+        result = engine.select_destination(dest_pos)
+        if not result.success:
+            return False
 
-        return promotion.can_promote(engine.state, from_pos, to_pos, captured_piece, player)
+        # フェーズ3: 成り判断（必要な場合）
+        if engine.phase == GamePhase.PROMOTION:
+            promote = self.choose_promotion(engine)
+            result = engine.decide_promotion(promote)
+            if not result.success:
+                return False
+
+        # フェーズ4: 射撃（必要な場合）
+        if engine.phase == GamePhase.SHOOTING:
+            target = self.choose_shoot_target(engine)
+            if target:
+                result = engine.shoot(target)
+            else:
+                result = engine.skip_shoot()
+            if not result.success:
+                return False
+
+        return True
