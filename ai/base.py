@@ -88,14 +88,20 @@ class BaseAI(ABC):
             if not result.success:
                 return False
 
-        # フェーズ4: 射撃（必要な場合）
-        if engine.phase == GamePhase.SHOOTING:
+        # フェーズ4: 射撃（必要な場合、複数回可能）
+        while engine.phase == GamePhase.SHOOTING:
             target = self.choose_shoot_target(engine)
             if target:
                 result = engine.shoot(target)
+                if not result.success:
+                    return False
+                # まだ射撃可能ならループ継続
+                if not result.can_shoot:
+                    break
             else:
                 result = engine.skip_shoot()
-            if not result.success:
-                return False
+                if not result.success:
+                    return False
+                break
 
         return True
