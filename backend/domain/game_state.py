@@ -7,15 +7,6 @@ from .kifu import Kifu
 
 
 @dataclass
-class StateSnapshot:
-    """Minimax用の軽量スナップショット"""
-    board_data: list  # Board.gridのコピー
-    current_player: int
-    move_count: int
-    winner: Optional[int]
-
-
-@dataclass
 class GameState:
     """ゲームの状態"""
     board: Board = field(default_factory=Board)
@@ -47,22 +38,6 @@ class GameState:
     def has_piece_alive(self, piece_id: int, player: int) -> bool:
         """指定した駒が生きているか"""
         return len(self.get_piece_positions(piece_id, player)) > 0
-
-    def create_snapshot(self) -> StateSnapshot:
-        """Minimax用のスナップショットを作成"""
-        return StateSnapshot(
-            board_data=[row[:] for row in self.board.grid],
-            current_player=self.current_player,
-            move_count=self.move_count,
-            winner=self.winner,
-        )
-
-    def restore_snapshot(self, snapshot: StateSnapshot) -> None:
-        """スナップショットから状態を復元"""
-        self.board.grid = [row[:] for row in snapshot.board_data]
-        self.current_player = snapshot.current_player
-        self.move_count = snapshot.move_count
-        self.winner = snapshot.winner
 
 
 def create_initial_state() -> GameState:

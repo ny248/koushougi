@@ -42,15 +42,15 @@ class MinimaxPlayer(BaseAI):
         scored_moves = self._order_moves(engine, moves)[:self.max_moves]
 
         for move in scored_moves:
-            # 手を適用（undo方式）
-            if not self._apply_move_inplace(engine, move):
+            # 手を適用
+            if not self._apply_move(engine, move):
                 continue
 
             # Minimax探索
             value = self._minimax(engine, self.depth - 1, alpha, beta, False, player)
 
             # undo
-            engine.pop_state()
+            engine.undo()
 
             if value > best_value:
                 best_value = value
@@ -113,11 +113,11 @@ class MinimaxPlayer(BaseAI):
         if maximizing:
             value = float('-inf')
             for move in scored_moves:
-                if not self._apply_move_inplace(engine, move):
+                if not self._apply_move(engine, move):
                     continue
 
                 value = max(value, self._minimax(engine, depth - 1, alpha, beta, False, original_player))
-                engine.pop_state()
+                engine.undo()
 
                 alpha = max(alpha, value)
                 if beta <= alpha:
@@ -127,11 +127,11 @@ class MinimaxPlayer(BaseAI):
         else:
             value = float('inf')
             for move in scored_moves:
-                if not self._apply_move_inplace(engine, move):
+                if not self._apply_move(engine, move):
                     continue
 
                 value = min(value, self._minimax(engine, depth - 1, alpha, beta, True, original_player))
-                engine.pop_state()
+                engine.undo()
 
                 beta = min(beta, value)
                 if beta <= alpha:
@@ -162,28 +162,22 @@ class MinimaxPlayer(BaseAI):
         scored.sort(reverse=True, key=lambda x: x[0])
         return [m for _, m in scored]
 
-    def _apply_move_inplace(self, engine: GameEngine, move: dict) -> bool:
-        """手を適用（in-place、undo可能）
+    def _apply_move(self, engine: GameEngine, move: dict) -> bool:
+        """手を適用
 
         Returns:
             成功したかどうか
         """
-        # 状態を保存
-        engine.push_state()
-
         from_pos = move["from"]
         to_pos = move["to"]
         promote = move.get("promote", False)
 
         result = engine.move(from_pos, to_pos, promote=promote)
         if not result.success:
-            # 失敗したら元に戻す
-            engine.pop_state()
             return False
 
         # 射撃はスキップ（簡略化）
-        shoot_targets = engine.get_shoot_targets()
-        if shoot_targets:
+        if result.can_shoot:
             engine.skip_shoot()
 
         return True

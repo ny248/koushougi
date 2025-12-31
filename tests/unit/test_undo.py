@@ -8,16 +8,13 @@ from backend.domain.game_state import create_initial_state
 class TestUndo:
     """undo機能のテスト"""
 
-    def test_push_pop_state(self):
-        """push/popで状態が復元される"""
+    def test_undo_simple_move(self):
+        """undoで状態が復元される"""
         engine = GameEngine()
 
         # 初期状態を記録
         initial_player = engine.current_player
         initial_move_count = engine.state.move_count
-
-        # 状態を保存
-        engine.push_state()
 
         # 手を指す（先鋒を前進）
         result = engine.move((9, 12), (9, 11))
@@ -28,7 +25,7 @@ class TestUndo:
         assert engine.state.move_count != initial_move_count
 
         # undoで復元
-        assert engine.pop_state() is True
+        assert engine.undo() is True
 
         # 元に戻っている
         assert engine.current_player == initial_player
@@ -37,55 +34,41 @@ class TestUndo:
         assert engine.state.board.get(9, 12) is not None
         assert engine.state.board.get(9, 11) is None
 
-    def test_multiple_push_pop(self):
-        """複数回のpush/popが正常に動作する"""
+    def test_multiple_undo(self):
+        """複数回のundoが正常に動作する"""
         engine = GameEngine()
 
-        # 3手分保存して戻す
-        positions = []
-
+        # 3手指す
+        moves_played = []
         for i in range(3):
-            engine.push_state()
-            positions.append(engine.current_player)
-
             # 適当な手を指す
-            moves = []
             for x in range(19):
                 for y in range(19):
                     piece = engine.state.board.get(x, y)
                     if piece and piece[1] == engine.current_player:
                         legal = engine.get_legal_moves((x, y))
                         if legal:
-                            moves.append(((x, y), legal[0]))
+                            from_pos = (x, y)
+                            to_pos = legal[0]
+                            moves_played.append((from_pos, to_pos, engine.current_player))
+                            engine.move(from_pos, to_pos)
+                            break
+                else:
+                    continue
+                break
 
-            if moves:
-                from_pos, to_pos = moves[0]
-                engine.move(from_pos, to_pos)
-
-        # 3回popして戻る
+        # 3回undoして戻る
         for i in range(2, -1, -1):
-            assert engine.pop_state() is True
-            assert engine.current_player == positions[i]
+            assert engine.undo() is True
+            assert engine.current_player == moves_played[i][2]
 
-    def test_pop_empty_stack(self):
-        """空のスタックからpopするとFalseを返す"""
+    def test_undo_empty_kifu(self):
+        """空の棋譜からundoするとFalseを返す"""
         engine = GameEngine()
-        assert engine.pop_state() is False
-
-    def test_clear_stack(self):
-        """clear_stackでスタックが空になる"""
-        engine = GameEngine()
-
-        engine.push_state()
-        engine.push_state()
-        engine.push_state()
-
-        engine.clear_stack()
-
-        assert engine.pop_state() is False
+        assert engine.undo() is False
 
     def test_captured_piece_restored(self):
-        """駒を取った後にpush/popすると盤面が復元される"""
+        """駒を取った後にundoすると盤面が復元される"""
         engine = GameEngine()
 
         # 先手の先鋒を前進させる
@@ -95,8 +78,6 @@ class TestUndo:
         engine.move((9, 7), (9, 8))
         engine.move((9, 10), (9, 9))
 
-        # 後手が駒を取る前に保存
-        engine.push_state()
         board_before = [row[:] for row in engine.state.board.grid]
         player_before = engine.current_player
 
@@ -107,7 +88,7 @@ class TestUndo:
         assert engine.current_player != player_before
 
         # undo
-        engine.pop_state()
+        engine.undo()
 
         # 盤面が復元されている
         assert engine.state.board.grid == board_before
