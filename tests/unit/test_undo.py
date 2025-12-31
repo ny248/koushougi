@@ -1,8 +1,28 @@
 """undo機能のテスト"""
 
 import pytest
-from backend.rules.game_engine import GameEngine
+from backend.rules.game_engine import GameEngine, GamePhase
 from backend.domain.game_state import create_initial_state
+
+
+def do_move(engine, from_pos, to_pos, promote=False):
+    """フェーズベースAPIで手を指すヘルパー関数"""
+    if not engine.select_piece(from_pos):
+        return None
+
+    result = engine.select_destination(to_pos)
+    if not result.success:
+        return None
+
+    # 成り判断が必要な場合
+    if engine.phase == GamePhase.PROMOTION:
+        result = engine.decide_promotion(promote)
+
+    # 射撃フェーズはスキップ
+    while engine.phase == GamePhase.SHOOTING:
+        result = engine.skip_shoot()
+
+    return result
 
 
 class TestUndo:
@@ -17,7 +37,8 @@ class TestUndo:
         initial_move_count = engine.state.move_count
 
         # 手を指す（先鋒を前進）
-        result = engine.move((9, 12), (9, 11))
+        result = do_move(engine, (9, 12), (9, 11))
+        assert result is not None
         assert result.success
 
         # 手番と手数が変わっている
@@ -42,7 +63,10 @@ class TestUndo:
         moves_played = []
         for i in range(3):
             # 適当な手を指す
+            found = False
             for x in range(19):
+                if found:
+                    break
                 for y in range(19):
                     piece = engine.state.board.get(x, y)
                     if piece and piece[1] == engine.current_player:
@@ -51,11 +75,9 @@ class TestUndo:
                             from_pos = (x, y)
                             to_pos = legal[0]
                             moves_played.append((from_pos, to_pos, engine.current_player))
-                            engine.move(from_pos, to_pos)
+                            do_move(engine, from_pos, to_pos)
+                            found = True
                             break
-                else:
-                    continue
-                break
 
         # 3回undoして戻る
         for i in range(2, -1, -1):
@@ -72,16 +94,16 @@ class TestUndo:
         engine = GameEngine()
 
         # 先手の先鋒を前進させる
-        engine.move((9, 12), (9, 11))
-        engine.move((9, 6), (9, 7))  # 後手も前進
-        engine.move((9, 11), (9, 10))
-        engine.move((9, 7), (9, 8))
-        engine.move((9, 10), (9, 9))
+        do_move(engine, (9, 12), (9, 11))
+        do_move(engine, (9, 6), (9, 7))  # 後手も前進
+        do_move(engine, (9, 11), (9, 10))
+        do_move(engine, (9, 7), (9, 8))
+        do_move(engine, (9, 10), (9, 9))
 
         board_before = [row[:] for row in engine.state.board.grid]
         player_before = engine.current_player
 
-        engine.move((9, 8), (9, 9))  # 後手が先手の先鋒を取る
+        do_move(engine, (9, 8), (9, 9))  # 後手が先手の先鋒を取る
 
         # 駒が取られて盤面が変わっている
         assert engine.state.board.get(9, 9) is not None
@@ -103,7 +125,7 @@ class TestMinimaxWithUndo:
 
     def test_minimax_does_not_corrupt_state(self):
         """Minimaxの探索後に盤面が変わっていないこと"""
-        from ai.minimax import MinimaxPlayer
+        from ai.minimax.player import MinimaxPlayer
 
         engine = GameEngine()
         ai = MinimaxPlayer(depth=2, max_moves=10)
@@ -112,29 +134,34 @@ class TestMinimaxWithUndo:
         initial_grid = [row[:] for row in engine.state.board.grid]
         initial_player = engine.current_player
 
-        # AIに手を選ばせる（探索）
-        move = ai.choose_move(engine)
+        # AIに駒を選ばせる（探索が行われる）
+        piece_pos = ai.choose_piece(engine)
 
         # 探索後も盤面が変わっていないこと
         assert engine.state.board.grid == initial_grid
         assert engine.current_player == initial_player
 
         # 手は選べていること
-        assert move is not None
+        assert piece_pos is not None
 
     def test_minimax_returns_valid_move(self):
         """Minimaxが合法手を返すこと"""
-        from ai.minimax import MinimaxPlayer
+        from ai.minimax.player import MinimaxPlayer
 
         engine = GameEngine()
         ai = MinimaxPlayer(depth=2, max_moves=10)
 
-        move = ai.choose_move(engine)
+        # 駒選択
+        piece_pos = ai.choose_piece(engine)
+        assert piece_pos is not None
 
-        assert move is not None
-        assert "from" in move
-        assert "to" in move
+        # 選択を実行
+        engine.select_piece(piece_pos)
+
+        # 移動先選択
+        dest_pos = ai.choose_destination(engine)
+        assert dest_pos is not None
 
         # 実際に合法手かチェック
-        legal_moves = engine.get_legal_moves(move["from"])
-        assert move["to"] in legal_moves
+        legal_moves = engine.get_legal_destinations()
+        assert dest_pos in legal_moves

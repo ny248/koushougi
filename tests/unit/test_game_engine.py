@@ -3,7 +3,32 @@
 import pytest
 from backend.domain.board import Board
 from backend.domain.game_state import GameState, create_initial_state
-from backend.rules.game_engine import GameEngine
+from backend.rules.game_engine import GameEngine, GamePhase
+
+
+def do_move(engine, from_pos, to_pos, promote=False):
+    """フェーズベースAPIで手を指すヘルパー関数"""
+    if not engine.select_piece(from_pos):
+        from dataclasses import dataclass
+        @dataclass
+        class FailResult:
+            success: bool = False
+            error: str = "駒選択失敗"
+        return FailResult()
+
+    result = engine.select_destination(to_pos)
+    if not result.success:
+        return result
+
+    # 成り判断が必要な場合
+    if engine.phase == GamePhase.PROMOTION:
+        result = engine.decide_promotion(promote)
+
+    # 射撃フェーズはスキップ
+    while engine.phase == GamePhase.SHOOTING:
+        result = engine.skip_shoot()
+
+    return result
 
 
 class TestGameEngineBasic:
@@ -52,7 +77,7 @@ class TestGameEngineMove:
         # player=0の前は-y方向なので(9, 11)に移動可能
         assert (9, 11) in moves
 
-        result = engine.move((9, 12), (9, 11))
+        result = do_move(engine, (9, 12), (9, 11))
         assert result.success
         assert engine.current_player == 1  # 後手に交代
 
@@ -61,10 +86,9 @@ class TestGameEngineMove:
         state.board.set(9, 0, 1, 1)  # 後手の将
         engine = GameEngine(state)
 
-        # 先手番で後手の駒を動かそうとする
-        result = engine.move((9, 0), (9, 1))
-        assert not result.success
-        assert "相手" in result.error
+        # 先手番で後手の駒を選択しようとする
+        success = engine.select_piece((9, 0))
+        assert not success  # 選択失敗
 
     def test_illegal_move(self):
         state = GameState()
@@ -72,7 +96,8 @@ class TestGameEngineMove:
         engine = GameEngine(state)
 
         # 先鋒は横には動けない
-        result = engine.move((9, 12), (10, 12))
+        engine.select_piece((9, 12))
+        result = engine.select_destination((10, 12))
         assert not result.success
 
 
@@ -93,7 +118,7 @@ class TestGameEngineVictory:
         engine = GameEngine(state)
 
         # 先手が後手の将を取る
-        result = engine.move((5, 5), (6, 5))
+        result = do_move(engine, (5, 5), (6, 5))
         assert result.success
         assert result.captured == 1
 
@@ -112,7 +137,7 @@ class TestGameEngineVictory:
         engine = GameEngine(state)
 
         # 先手が後手の将を取る
-        result = engine.move((5, 5), (6, 5))
+        result = do_move(engine, (5, 5), (6, 5))
         assert result.success
         assert result.winner == 0  # 先手の勝ち
 
@@ -128,8 +153,8 @@ class TestGameEnginePromotion:
 
         engine = GameEngine(state)
 
-        # 敵陣(y=5)に移動
-        result = engine.move((5, 6), (5, 5), promote=True)
+        # 敵陣(y=5)に移動して成る
+        result = do_move(engine, (5, 6), (5, 5), promote=True)
         assert result.success
         assert result.promoted
         assert result.promoted_to == 35  # 帥
@@ -149,7 +174,6 @@ class TestInitialSetup:
                 if state.board.get(x, y) is not None:
                     count += 1
 
-        # GAMERULE.mdの初期配置に基づく
         # 実際の配置を信頼して、駒があることを確認
         assert count > 0, "No pieces on board"
         # 先手と後手で同数であることを確認
