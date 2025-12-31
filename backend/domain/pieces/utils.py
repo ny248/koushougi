@@ -250,12 +250,11 @@ def shoot_targets(pos, board, player, shoot_range, penetrate=False,
 
             piece_id, piece_player = piece
 
-            # 味方は射れない＆貫通もブロック
+            # 味方は射れない
             if piece_player == player:
                 if not penetrate:
                     break
-                # 貫通でも味方でブロック
-                blocked = True
+                # 貫通なら味方を飛び越えて射撃可能
                 continue
 
             # 敵駒
@@ -272,6 +271,9 @@ def shoot_targets(pos, board, player, shoot_range, penetrate=False,
             if piece_id in immune:
                 if not penetrate:
                     break
+                # immune駒がpenetrate_blockでもある場合、貫通をブロック
+                if piece_id in penetrate_block:
+                    blocked = True
                 continue
 
             # 射撃可能
