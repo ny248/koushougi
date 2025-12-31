@@ -141,18 +141,6 @@ def jump_moves(pos, cells, board, player):
     return moves
 
 
-def jump_moves_oriented(pos, cells, board, player):
-    """跳び移動（プレイヤーによって前後反転）"""
-    x, y = pos
-    moves = []
-    for dx, dy in cells:
-        actual_dy = dy if player == 0 else -dy
-        nx, ny = x + dx, y + actual_dy
-        if board.is_valid(nx, ny) and not board.has_ally(nx, ny, player):
-            moves.append((nx, ny))
-    return moves
-
-
 def lion_moves(pos, directions, board, player, jump=False):
     """二著する駒（Lion移動）
 
@@ -309,32 +297,3 @@ def area_kill_targets(pos, board, player):
             if board.is_valid(nx, ny) and board.get(nx, ny) is not None:
                 targets.append((nx, ny))
     return targets
-
-
-def path_slide_moves(pos, directions, board, player, max_distance):
-    """通り道の敵を倒しながら進む移動（招揺用）
-
-    Returns:
-        (移動可能位置リスト, 経路上の敵位置リスト)
-    """
-    x, y = pos
-    moves = []
-    path_kills = []
-
-    for dx, dy in directions:
-        kills_on_path = []
-        for dist in range(1, max_distance + 1):
-            nx, ny = x + dx * dist, y + dy * dist
-            if not board.is_valid(nx, ny):
-                break
-            if board.has_ally(nx, ny, player):
-                break  # 味方は飛び越えられない
-
-            if board.has_enemy(nx, ny, player):
-                kills_on_path.append((nx, ny))
-
-            # この位置への移動は可能（途中の敵も倒しながら）
-            moves.append((nx, ny))
-            path_kills.append(kills_on_path.copy())
-
-    return moves, path_kills

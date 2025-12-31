@@ -18,16 +18,6 @@ class GameConfig:
     sente_type: PlayerType  # 先手
     gote_type: PlayerType   # 後手
 
-    @property
-    def is_human_turn(self) -> callable:
-        """指定プレイヤーが人間かどうかを返す関数"""
-        def check(player: int) -> bool:
-            if player == 0:
-                return self.sente_type == PlayerType.HUMAN
-            else:
-                return self.gote_type == PlayerType.HUMAN
-        return check
-
 
 class MenuScreen:
     """対局設定メニュー画面"""
