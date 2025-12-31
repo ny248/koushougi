@@ -1,6 +1,6 @@
 """騎総（きそう）- ID: 21 - 馬兵の成り、特殊二著"""
 
-from .utils import jump_moves, can_promote_by_zone
+from .utils import can_promote_by_zone
 
 ID = 21
 NAME = "騎総"
@@ -15,7 +15,7 @@ KNIGHT_MOVES = [
 
 
 def get_moves(pos, board, player):
-    """桂馬飛び後、縦横の同じ方向に桂馬飛びするか元の位置に戻れる"""
+    """桂馬飛び後、縦横の同じ方向に桂馬飛びするか1手目で止まる。元の位置には戻れない"""
     x, y = pos
     moves = set()
 
@@ -30,7 +30,7 @@ def get_moves(pos, board, player):
         moves.add((nx1, ny1))
 
         # 2手目: 縦横の同じ方向に桂馬飛び
-        # dx1の符号で縦横方向を決定
+        # dx1の絶対値で縦横方向を決定
         if abs(dx1) == 2:
             # 横方向に2マスだったので、さらに横に桂馬飛び
             second_moves = [(dx1, 1), (dx1, -1)]
@@ -44,10 +44,10 @@ def get_moves(pos, board, player):
                 continue
             if board.has_ally(nx2, ny2, player):
                 continue
+            # 元の位置には戻れない
+            if (nx2, ny2) == (x, y):
+                continue
             moves.add((nx2, ny2))
-
-        # 元の位置に戻ることも可能
-        # （ただし意味がないので省略）
 
     return list(moves)
 
