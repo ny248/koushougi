@@ -12,10 +12,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from config import BOARD_SIZE
 
 # 定数
 NUM_PIECE_TYPES = 58  # 駒の種類数（0=空、1-57=駒）
-BOARD_SIZE = 19
 NUM_SQUARES = BOARD_SIZE * BOARD_SIZE  # 361
 
 

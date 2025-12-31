@@ -1,6 +1,6 @@
 """盤面クラス"""
 
-BOARD_SIZE = 19
+from config import BOARD_SIZE
 
 
 class Board:
