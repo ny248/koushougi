@@ -138,3 +138,46 @@ def get_promotion_value(piece_id: int) -> int:
         return 0
 
     return PIECE_VALUES.get(piece.promotes_to, 0) - PIECE_VALUES.get(piece_id, 0)
+
+
+def select_best_shoot_target(
+    targets: list[tuple[int, int]],
+    board,
+    min_value: int = 20
+) -> tuple[int, int] | None:
+    """射撃対象から最高価値の駒を選択
+
+    Args:
+        targets: 射撃可能な位置のリスト
+        board: 盤面オブジェクト
+        min_value: この価値未満の駒はスキップ
+
+    Returns:
+        最高価値の射撃対象の位置、または None（スキップ）
+    """
+    import random
+
+    if not targets:
+        return None
+
+    # 射撃対象の価値を評価
+    scored_targets = []
+    for pos in targets:
+        target = board.get(pos[0], pos[1])
+        if target:
+            piece_id, _ = target
+            value = get_piece_value(piece_id)
+            scored_targets.append((value, pos))
+
+    if not scored_targets:
+        return None
+
+    # 最高価値のターゲットを選択
+    max_value = max(v for v, _ in scored_targets)
+
+    # 価値が低すぎる場合はスキップ
+    if max_value < min_value:
+        return None
+
+    best_targets = [p for v, p in scored_targets if v == max_value]
+    return random.choice(best_targets)

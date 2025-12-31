@@ -4,7 +4,7 @@ import random
 from typing import Optional
 from backend.rules.game_engine import GameEngine
 from ai.base import BaseAI
-from ai.greedy.piece_values import get_piece_value, get_promotion_value
+from ai.greedy.piece_values import get_piece_value, get_promotion_value, select_best_shoot_target
 
 
 class GreedyPlayer(BaseAI):
@@ -96,27 +96,4 @@ class GreedyPlayer(BaseAI):
     def choose_shoot_target(self, engine: GameEngine) -> Optional[tuple[int, int]]:
         """最も価値の高い駒を射撃"""
         targets = engine.get_shoot_targets()
-        if not targets:
-            return None
-
-        # 射撃対象の価値を評価
-        scored_targets = []
-        for pos in targets:
-            target = engine.state.board.get(pos[0], pos[1])
-            if target:
-                piece_id, _ = target
-                value = get_piece_value(piece_id)
-                scored_targets.append((value, pos))
-
-        if not scored_targets:
-            return None
-
-        # 最高価値のターゲットを選択
-        max_value = max(v for v, _ in scored_targets)
-
-        # 価値が低すぎる場合はスキップ（歩兵以下）
-        if max_value < 20:
-            return None
-
-        best_targets = [p for v, p in scored_targets if v == max_value]
-        return random.choice(best_targets)
+        return select_best_shoot_target(targets, engine.state.board)

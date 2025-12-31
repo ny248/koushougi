@@ -6,7 +6,7 @@ from backend.rules.game_engine import GameEngine, GamePhase
 from backend.domain.game_state import create_initial_state
 from ai.base import BaseAI
 from ai.minimax.evaluator import evaluate
-from ai.greedy.piece_values import get_piece_value
+from ai.greedy.piece_values import get_piece_value, select_best_shoot_target
 
 
 class MinimaxPlayer(BaseAI):
@@ -67,26 +67,7 @@ class MinimaxPlayer(BaseAI):
     def choose_shoot_target(self, engine: GameEngine) -> Optional[tuple[int, int]]:
         """射撃先を選択（最高価値を選択）"""
         targets = engine.get_shoot_targets()
-        if not targets:
-            return None
-
-        scored_targets = []
-        for pos in targets:
-            target = engine.state.board.get(pos[0], pos[1])
-            if target:
-                piece_id, _ = target
-                value = get_piece_value(piece_id)
-                scored_targets.append((value, pos))
-
-        if not scored_targets:
-            return None
-
-        max_value = max(v for v, _ in scored_targets)
-        if max_value < 20:
-            return None
-
-        best_targets = [p for v, p in scored_targets if v == max_value]
-        return random.choice(best_targets)
+        return select_best_shoot_target(targets, engine.state.board)
 
     def _find_best_move(self, engine: GameEngine) -> Optional[dict]:
         """Minimax探索で最善手を見つける"""
