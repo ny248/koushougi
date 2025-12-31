@@ -82,6 +82,10 @@ Examples:
                         help="棋譜出力ファイル（JSON）")
     parser.add_argument("--max-turns", type=int, default=AI_MAX_TURNS,
                         help="1局の最大ターン数")
+    parser.add_argument("--turn-timeout", type=float, default=30.0,
+                        help="1ターンのタイムアウト（秒）")
+    parser.add_argument("--game-timeout", type=float, default=300.0,
+                        help="1ゲームのタイムアウト（秒）")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="詳細ログ出力")
     parser.add_argument("--log-file", type=str,
@@ -123,18 +127,23 @@ Examples:
         max_turns=args.max_turns,
         logger=game_logger,
         progress_callback=on_progress,
+        turn_timeout=args.turn_timeout,
+        game_timeout=args.game_timeout,
     )
 
     # 結果サマリー
-    sente_wins = sum(1 for r in records if r.winner == 0)
-    gote_wins = sum(1 for r in records if r.winner == 1)
-    draws = sum(1 for r in records if r.winner is None)
+    sente_wins = sum(1 for r in records if r.winner == 0 and not r.timed_out)
+    gote_wins = sum(1 for r in records if r.winner == 1 and not r.timed_out)
+    draws = sum(1 for r in records if r.winner is None and not r.timed_out)
+    timeouts = sum(1 for r in records if r.timed_out)
     total_ms = sum(r.elapsed_ms for r in records)
 
     logger.info("=== 結果 ===")
     logger.info(f"先手勝利: {sente_wins} ({100*sente_wins/args.games:.1f}%)")
     logger.info(f"後手勝利: {gote_wins} ({100*gote_wins/args.games:.1f}%)")
     logger.info(f"引き分け: {draws} ({100*draws/args.games:.1f}%)")
+    if timeouts > 0:
+        logger.info(f"タイムアウト: {timeouts} ({100*timeouts/args.games:.1f}%)")
     logger.info(f"総時間: {total_ms:.1f}ms ({total_ms/args.games:.2f}ms/局)")
 
     # 棋譜保存

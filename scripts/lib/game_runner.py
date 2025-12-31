@@ -1,9 +1,12 @@
 """ゲーム実行・棋譜記録"""
 
 import time
+import signal
+import threading
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Callable
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import json
 
 from backend.rules.game_engine import GameEngine, GamePhase
@@ -13,8 +16,20 @@ from ai.base import BaseAI
 from .logger import GameLogger
 
 
-# 1ターンのタイムアウト警告閾値（ミリ秒）
-TURN_TIMEOUT_WARN_MS = 5000
+# タイムアウト設定（秒）
+TURN_TIMEOUT_SEC = 30.0      # 1ターンのタイムアウト
+GAME_TIMEOUT_SEC = 300.0     # 1ゲームのタイムアウト（5分）
+TURN_TIMEOUT_WARN_MS = 5000  # 警告閾値（ミリ秒）
+
+
+class TurnTimeoutError(Exception):
+    """ターンタイムアウト"""
+    pass
+
+
+class GameTimeoutError(Exception):
+    """ゲームタイムアウト"""
+    pass
 
 
 @dataclass
@@ -27,9 +42,11 @@ class GameRecord:
     kifu: Kifu = field(default_factory=Kifu)
     sente_name: str = ""
     gote_name: str = ""
+    error: Optional[str] = None  # エラー発生時のメッセージ
+    timed_out: bool = False      # タイムアウトしたか
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "game_id": self.game_id,
             "winner": self.winner,
             "total_turns": self.total_turns,
@@ -38,6 +55,11 @@ class GameRecord:
             "gote": self.gote_name,
             "kifu": self.kifu.to_dict(),
         }
+        if self.error:
+            d["error"] = self.error
+        if self.timed_out:
+            d["timed_out"] = True
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "GameRecord":
@@ -49,6 +71,8 @@ class GameRecord:
             sente_name=data.get("sente", ""),
             gote_name=data.get("gote", ""),
             kifu=Kifu.from_dict(data.get("kifu", {})),
+            error=data.get("error"),
+            timed_out=data.get("timed_out", False),
         )
 
 
@@ -58,6 +82,8 @@ def run_game(
     game_id: int = 0,
     max_turns: int = 300,
     logger: Optional[GameLogger] = None,
+    turn_timeout: float = TURN_TIMEOUT_SEC,
+    game_timeout: float = GAME_TIMEOUT_SEC,
 ) -> GameRecord:
     """1ゲームを実行
 
@@ -67,6 +93,8 @@ def run_game(
         game_id: ゲームID（ログ用）
         max_turns: 最大ターン数
         logger: ゲームロガー
+        turn_timeout: 1ターンのタイムアウト（秒）
+        game_timeout: ゲーム全体のタイムアウト（秒）
 
     Returns:
         GameRecord: 対局記録（棋譜含む）
@@ -84,26 +112,51 @@ def run_game(
     start_time = time.perf_counter()
     turn = 0
 
-    while turn < max_turns and not engine.is_game_over:
-        player = engine.current_player
-        ai = sente_ai if player == 0 else gote_ai
+    try:
+        while turn < max_turns and not engine.is_game_over:
+            # ゲーム全体のタイムアウトチェック
+            elapsed_total = time.perf_counter() - start_time
+            if elapsed_total > game_timeout:
+                raise GameTimeoutError(f"Game timeout after {elapsed_total:.1f}s")
 
-        turn_start = time.perf_counter()
+            player = engine.current_player
+            ai = sente_ai if player == 0 else gote_ai
 
-        # 1ターン実行
-        success = _play_turn_with_logging(engine, ai, player, logger)
+            turn_start = time.perf_counter()
 
-        turn_elapsed_ms = (time.perf_counter() - turn_start) * 1000
+            # 1ターン実行（タイムアウト付き）
+            success = _play_turn_with_timeout(
+                engine, ai, player, logger, turn_timeout
+            )
 
-        if turn_elapsed_ms > TURN_TIMEOUT_WARN_MS and logger:
-            logger.log_turn_timeout(player, engine.phase.name, turn_elapsed_ms)
+            turn_elapsed_ms = (time.perf_counter() - turn_start) * 1000
 
-        if not success:
-            if logger:
-                logger.log_error(f"Turn failed at phase {engine.phase.name}")
-            break
+            if turn_elapsed_ms > TURN_TIMEOUT_WARN_MS and logger:
+                logger.log_turn_timeout(player, engine.phase.name, turn_elapsed_ms)
 
-        turn += 1
+            if not success:
+                if logger:
+                    logger.log_error(f"Turn failed at phase {engine.phase.name}")
+                break
+
+            turn += 1
+
+    except TurnTimeoutError as e:
+        record.error = str(e)
+        record.timed_out = True
+        if logger:
+            logger.log_error(f"Turn timeout: {e}")
+
+    except GameTimeoutError as e:
+        record.error = str(e)
+        record.timed_out = True
+        if logger:
+            logger.log_error(f"Game timeout: {e}")
+
+    except Exception as e:
+        record.error = f"Unexpected error: {e}"
+        if logger:
+            logger.log_error(f"Unexpected error: {e}")
 
     elapsed_ms = (time.perf_counter() - start_time) * 1000
 
@@ -116,6 +169,37 @@ def run_game(
         logger.log_game_end(record.winner, record.total_turns, record.elapsed_ms)
 
     return record
+
+
+def _play_turn_with_timeout(
+    engine: GameEngine,
+    ai: BaseAI,
+    player: int,
+    logger: Optional[GameLogger],
+    timeout: float,
+) -> bool:
+    """1ターンをタイムアウト付きで実行"""
+    result = [False]
+    exception = [None]
+
+    def run_turn():
+        try:
+            result[0] = _play_turn_with_logging(engine, ai, player, logger)
+        except Exception as e:
+            exception[0] = e
+
+    thread = threading.Thread(target=run_turn)
+    thread.start()
+    thread.join(timeout=timeout)
+
+    if thread.is_alive():
+        # タイムアウト - スレッドは残るが処理を中断
+        raise TurnTimeoutError(f"Turn timeout after {timeout}s (player {player})")
+
+    if exception[0]:
+        raise exception[0]
+
+    return result[0]
 
 
 def _play_turn_with_logging(
@@ -193,6 +277,8 @@ def run_games(
     max_turns: int = 300,
     logger: Optional[GameLogger] = None,
     progress_callback=None,
+    turn_timeout: float = TURN_TIMEOUT_SEC,
+    game_timeout: float = GAME_TIMEOUT_SEC,
 ) -> list[GameRecord]:
     """複数ゲームを実行
 
@@ -203,18 +289,29 @@ def run_games(
         max_turns: 最大ターン数
         logger: ゲームロガー
         progress_callback: 進捗コールバック fn(game_idx, record, stats)
+        turn_timeout: 1ターンのタイムアウト（秒）
+        game_timeout: 1ゲームのタイムアウト（秒）
 
     Returns:
         list[GameRecord]: 対局記録リスト
     """
     records = []
-    stats = {"wins": 0, "losses": 0, "draws": 0}
+    stats = {"wins": 0, "losses": 0, "draws": 0, "timeouts": 0}
 
     for i in range(n_games):
-        record = run_game(sente_ai, gote_ai, game_id=i + 1, max_turns=max_turns, logger=logger)
+        record = run_game(
+            sente_ai, gote_ai,
+            game_id=i + 1,
+            max_turns=max_turns,
+            logger=logger,
+            turn_timeout=turn_timeout,
+            game_timeout=game_timeout,
+        )
         records.append(record)
 
-        if record.winner == 0:
+        if record.timed_out:
+            stats["timeouts"] += 1
+        elif record.winner == 0:
             stats["wins"] += 1
         elif record.winner == 1:
             stats["losses"] += 1
