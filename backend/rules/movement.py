@@ -138,15 +138,15 @@ def execute_move(state: GameState, from_pos: tuple[int, int],
     return result
 
 
-def execute_shoot(state: GameState, shooter_pos: tuple[int, int],
-                  targets: list[tuple[int, int]], player: int) -> list[tuple[tuple[int, int], int, bool]]:
-    """射撃を実行
+def _execute_kills(state: GameState, targets: list[tuple[int, int]],
+                   player: int, enemy_only: bool) -> list[tuple[tuple[int, int], int, bool]]:
+    """駒除去の共通処理
 
     Args:
         state: ゲーム状態
-        shooter_pos: 射撃する駒の位置
-        targets: 射撃対象の位置リスト
+        targets: 除去対象の位置リスト
         player: プレイヤー
+        enemy_only: Trueなら敵駒のみ、Falseなら敵味方両方
 
     Returns:
         取った駒のリスト [(位置, 駒ID, is_promoted), ...]
@@ -154,11 +154,30 @@ def execute_shoot(state: GameState, shooter_pos: tuple[int, int],
     killed = []
     for target_pos in targets:
         piece = state.board.get(target_pos[0], target_pos[1])
-        if piece and piece[1] != player:  # 敵駒のみ
-            is_promoted = state.board.get_promoted(target_pos[0], target_pos[1])
-            state.board.remove(target_pos[0], target_pos[1])
-            killed.append((target_pos, piece[0], is_promoted))
+        if piece is None:
+            continue
+        if enemy_only and piece[1] == player:
+            continue  # 敵のみモードで味方はスキップ
+        is_promoted = state.board.get_promoted(target_pos[0], target_pos[1])
+        state.board.remove(target_pos[0], target_pos[1])
+        killed.append((target_pos, piece[0], is_promoted))
     return killed
+
+
+def execute_shoot(state: GameState, shooter_pos: tuple[int, int],
+                  targets: list[tuple[int, int]], player: int) -> list[tuple[tuple[int, int], int, bool]]:
+    """射撃を実行
+
+    Args:
+        state: ゲーム状態
+        shooter_pos: 射撃する駒の位置（未使用だが互換性のため維持）
+        targets: 射撃対象の位置リスト
+        player: プレイヤー
+
+    Returns:
+        取った駒のリスト [(位置, 駒ID, is_promoted), ...]
+    """
+    return _execute_kills(state, targets, player, enemy_only=True)
 
 
 def execute_area_kill(state: GameState, pos: tuple[int, int],
@@ -167,22 +186,14 @@ def execute_area_kill(state: GameState, pos: tuple[int, int],
 
     Args:
         state: ゲーム状態
-        pos: 毒火の位置
+        pos: 毒火の位置（未使用だが互換性のため維持）
         targets: 破壊対象の位置リスト
         player: プレイヤー
 
     Returns:
         取った駒のリスト [(位置, 駒ID, is_promoted), ...]
     """
-    killed = []
-    for target_pos in targets:
-        piece = state.board.get(target_pos[0], target_pos[1])
-        if piece:
-            is_promoted = state.board.get_promoted(target_pos[0], target_pos[1])
-            # 敵味方問わず破壊
-            state.board.remove(target_pos[0], target_pos[1])
-            killed.append((target_pos, piece[0], is_promoted))
-    return killed
+    return _execute_kills(state, targets, player, enemy_only=False)
 
 
 def check_revert_all(state: GameState) -> list[tuple[tuple[int, int], int, int]]:
