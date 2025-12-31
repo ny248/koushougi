@@ -275,7 +275,8 @@ class GameApp:
 
         # 射撃待ち
         if self.engine.phase == GamePhase.SHOOTING:
-            self.status_text = "射撃先をクリック（Sでスキップ）"
+            remaining = self.engine.get_remaining_shoot_count()
+            self.status_text = f"射撃先をクリック（残り{remaining}回, Sでスキップ）"
             return
 
         # 勝敗
@@ -297,7 +298,8 @@ class GameApp:
 
             # 射撃待ち
             if self.engine.phase == GamePhase.SHOOTING:
-                self.status_text = "射撃先をクリック（Sでスキップ）"
+                remaining = self.engine.get_remaining_shoot_count()
+                self.status_text = f"射撃先をクリック（残り{remaining}回, Sでスキップ）"
                 return
 
             # 勝敗
@@ -325,6 +327,14 @@ class GameApp:
             status_parts = []
             if result.path_kills:
                 status_parts.append(f"{len(result.path_kills)}体撃破")
+
+            # まだ射撃可能な場合
+            if result.can_shoot and self.engine.phase == GamePhase.SHOOTING:
+                remaining = self.engine.get_remaining_shoot_count()
+                status_parts.append(f"残り{remaining}回")
+                self.status_text = " / ".join(status_parts) + "（Sでスキップ）"
+                return
+
             if result.winner is not None:
                 winner_name = "先手" if result.winner == 0 else "後手"
                 status_parts.append(f"{winner_name}の勝ち！")
