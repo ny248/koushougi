@@ -1,9 +1,20 @@
 """ゲーム状態管理"""
 
+import copy
 from dataclasses import dataclass, field
 from typing import Optional
 from .board import Board, BOARD_SIZE
 from .piece_registry import get_piece
+
+
+@dataclass
+class StateSnapshot:
+    """状態のスナップショット（undo用）"""
+    board_grid: list[list]  # 盤面のコピー
+    current_player: int
+    captured_pieces: dict[int, list[int]]
+    move_count: int
+    winner: Optional[int]
 
 
 @dataclass
@@ -38,6 +49,27 @@ class GameState:
     def is_game_over(self) -> bool:
         """ゲームが終了しているか"""
         return self.winner is not None
+
+    def create_snapshot(self) -> StateSnapshot:
+        """現在の状態のスナップショットを作成"""
+        return StateSnapshot(
+            board_grid=copy.deepcopy(self.board.grid),
+            current_player=self.current_player,
+            captured_pieces={
+                0: self.captured.pieces[0].copy(),
+                1: self.captured.pieces[1].copy(),
+            },
+            move_count=self.move_count,
+            winner=self.winner,
+        )
+
+    def restore_snapshot(self, snapshot: StateSnapshot) -> None:
+        """スナップショットから状態を復元"""
+        self.board.grid = snapshot.board_grid
+        self.current_player = snapshot.current_player
+        self.captured.pieces = snapshot.captured_pieces
+        self.move_count = snapshot.move_count
+        self.winner = snapshot.winner
 
     def get_piece_positions(self, piece_id: int, player: Optional[int] = None) -> list[tuple[int, int]]:
         """指定した駒の位置リストを取得"""

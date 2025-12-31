@@ -2,7 +2,7 @@
 
 from typing import Optional
 from dataclasses import dataclass
-from backend.domain.game_state import GameState, create_initial_state
+from backend.domain.game_state import GameState, StateSnapshot, create_initial_state
 from backend.domain.piece_registry import get_piece
 from . import movement, promotion, victory
 
@@ -34,6 +34,35 @@ class GameEngine:
         self.state = state or create_initial_state()
         self._pending_shoot: Optional[dict] = None  # 射撃待ち状態
         self._pending_promotion: Optional[tuple[int, int]] = None  # 成り待ち状態
+        self._snapshot_stack: list[tuple[StateSnapshot, Optional[dict], Optional[tuple[int, int]]]] = []
+
+    def push_state(self) -> None:
+        """現在の状態をスタックに保存（undo用）"""
+        snapshot = self.state.create_snapshot()
+        self._snapshot_stack.append((
+            snapshot,
+            self._pending_shoot.copy() if self._pending_shoot else None,
+            self._pending_promotion,
+        ))
+
+    def pop_state(self) -> bool:
+        """状態をスタックから復元（undo）
+
+        Returns:
+            成功したかどうか
+        """
+        if not self._snapshot_stack:
+            return False
+
+        snapshot, pending_shoot, pending_promotion = self._snapshot_stack.pop()
+        self.state.restore_snapshot(snapshot)
+        self._pending_shoot = pending_shoot
+        self._pending_promotion = pending_promotion
+        return True
+
+    def clear_stack(self) -> None:
+        """スナップショットスタックをクリア"""
+        self._snapshot_stack.clear()
 
     @property
     def current_player(self) -> int:
