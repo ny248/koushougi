@@ -7,37 +7,41 @@ from pathlib import Path
 import time
 import json
 
-from model import create_model
-from dataset import create_dataloader
+from .model import create_model, NUM_PIECE_TYPES, NUM_SQUARES
+from .dataset import create_dataloader
 
 
-def train_epoch(model, dataloader, optimizer, device, policy_weight=1.0, value_weight=1.0):
+def train_epoch(model, dataloader, optimizer, device, policy_weight=1.0, value_weight=1.0, capture_weight=0.5):
     """1エポック学習"""
     model.train()
 
     total_loss = 0.0
     total_policy_loss = 0.0
     total_value_loss = 0.0
+    total_capture_loss = 0.0
     num_batches = 0
 
     policy_criterion = nn.CrossEntropyLoss()
     value_criterion = nn.MSELoss()
+    capture_criterion = nn.MSELoss()
 
-    for batch_idx, (board, target_move, target_value) in enumerate(dataloader):
+    for batch_idx, (board, target_policy, target_value, target_capture) in enumerate(dataloader):
         board = board.to(device)
-        target_move = target_move.to(device)
+        target_policy = target_policy.to(device)
         target_value = target_value.to(device)
+        target_capture = target_capture.to(device)
 
         optimizer.zero_grad()
 
         # Forward pass
-        policy_logits, value_pred = model(board)
+        policy_logits, value_pred, capture_pred = model(board)
 
         # Loss計算
-        policy_loss = policy_criterion(policy_logits, target_move)
+        policy_loss = policy_criterion(policy_logits, target_policy)
         value_loss = value_criterion(value_pred, target_value)
+        capture_loss = capture_criterion(capture_pred, target_capture)
 
-        loss = policy_weight * policy_loss + value_weight * value_loss
+        loss = policy_weight * policy_loss + value_weight * value_loss + capture_weight * capture_loss
 
         # Backward pass
         loss.backward()
@@ -47,55 +51,23 @@ def train_epoch(model, dataloader, optimizer, device, policy_weight=1.0, value_w
         total_loss += loss.item()
         total_policy_loss += policy_loss.item()
         total_value_loss += value_loss.item()
+        total_capture_loss += capture_loss.item()
         num_batches += 1
 
         if (batch_idx + 1) % 100 == 0:
             avg_loss = total_loss / num_batches
             avg_policy = total_policy_loss / num_batches
             avg_value = total_value_loss / num_batches
+            avg_capture = total_capture_loss / num_batches
             print(f"  バッチ {batch_idx+1}/{len(dataloader)}: "
-                  f"Loss={avg_loss:.4f} (Policy={avg_policy:.4f}, Value={avg_value:.4f})")
+                  f"Loss={avg_loss:.4f} (P={avg_policy:.4f}, V={avg_value:.4f}, C={avg_capture:.4f})")
 
     avg_loss = total_loss / num_batches
     avg_policy = total_policy_loss / num_batches
     avg_value = total_value_loss / num_batches
+    avg_capture = total_capture_loss / num_batches
 
-    return avg_loss, avg_policy, avg_value
-
-
-def evaluate(model, dataloader, device):
-    """評価"""
-    model.eval()
-
-    total_loss = 0.0
-    total_policy_loss = 0.0
-    total_value_loss = 0.0
-    num_batches = 0
-
-    policy_criterion = nn.CrossEntropyLoss()
-    value_criterion = nn.MSELoss()
-
-    with torch.no_grad():
-        for board, target_move, target_value in dataloader:
-            board = board.to(device)
-            target_move = target_move.to(device)
-            target_value = target_value.to(device)
-
-            policy_logits, value_pred = model(board)
-
-            policy_loss = policy_criterion(policy_logits, target_move)
-            value_loss = value_criterion(value_pred, target_value)
-
-            total_loss += (policy_loss + value_loss).item()
-            total_policy_loss += policy_loss.item()
-            total_value_loss += value_loss.item()
-            num_batches += 1
-
-    avg_loss = total_loss / num_batches
-    avg_policy = total_policy_loss / num_batches
-    avg_value = total_value_loss / num_batches
-
-    return avg_loss, avg_policy, avg_value
+    return avg_loss, avg_policy, avg_value, avg_capture
 
 
 def main():
@@ -108,7 +80,6 @@ def main():
     parser.add_argument("--lr", type=float, default=0.001, help="学習率")
     parser.add_argument("--device", type=str, default="mps", choices=["mps", "cuda", "cpu"], help="デバイス")
     parser.add_argument("--lite", action="store_true", help="軽量モデルを使用")
-    parser.add_argument("--val-split", type=float, default=0.1, help="検証データの割合")
     args = parser.parse_args()
 
     # 出力ディレクトリ作成
@@ -154,7 +125,8 @@ def main():
     history = {
         "train_loss": [],
         "train_policy": [],
-        "train_value": []
+        "train_value": [],
+        "train_capture": []
     }
 
     best_loss = float("inf")
@@ -163,18 +135,19 @@ def main():
         print(f"\nエポック {epoch+1}/{args.epochs}")
         start_time = time.time()
 
-        train_loss, train_policy, train_value = train_epoch(
+        train_loss, train_policy, train_value, train_capture = train_epoch(
             model, train_loader, optimizer, device
         )
 
         elapsed = time.time() - start_time
 
         print(f"  完了: {elapsed:.1f}秒")
-        print(f"  Train Loss: {train_loss:.4f} (Policy={train_policy:.4f}, Value={train_value:.4f})")
+        print(f"  Train Loss: {train_loss:.4f} (P={train_policy:.4f}, V={train_value:.4f}, C={train_capture:.4f})")
 
         history["train_loss"].append(train_loss)
         history["train_policy"].append(train_policy)
         history["train_value"].append(train_value)
+        history["train_capture"].append(train_capture)
 
         # モデル保存
         if train_loss < best_loss:
