@@ -14,12 +14,14 @@ HATA_ID = 16     # 旗
 def check_victory(state: GameState) -> Optional[int]:
     """勝敗判定
 
-    勝利条件（GAMERULE.mdより）:
-    - 敵の「将」と「中軍と旗のどちらか」を取ると勝ち
+    勝利条件:
+    - 敵の「将」と「中軍または旗」を取ると勝ち
     - ただし中軍が帥に成っていれば、将と旗が取られても負けにならない
 
     つまり敵が負ける条件:
     - 帥がいない AND 将がいない AND (中軍がいない OR 旗がいない)
+
+    重要: 将が生きている限り負けにはならない
 
     Args:
         state: ゲーム状態
@@ -40,25 +42,20 @@ def check_victory(state: GameState) -> Optional[int]:
         # 敵の将が生きているか
         has_shou = state.has_piece_alive(SHOU_ID, enemy)
 
-        # 敵の中軍が生きているか
-        has_chugun = state.has_piece_alive(CHUGUN_ID, enemy)
+        # 将が生きている限り負けにはならない
+        if has_shou:
+            continue
 
-        # 敵の旗が生きているか
+        # 将がいない場合、中軍と旗の両方が残っていれば負けにならない
+        has_chugun = state.has_piece_alive(CHUGUN_ID, enemy)
         has_hata = state.has_piece_alive(HATA_ID, enemy)
 
-        # 将がいない場合
-        if not has_shou:
-            # 中軍と旗の両方が残っていれば負けにならない
-            if has_chugun and has_hata:
-                continue
-            # 中軍または旗のどちらかがいなければ負け
-            state.winner = player
-            return player
+        if has_chugun and has_hata:
+            continue
 
-        # 将がいる場合、中軍と旗の両方がいなければ負け
-        if not has_chugun and not has_hata:
-            state.winner = player
-            return player
+        # 将がいない AND (中軍がいない OR 旗がいない) → 負け
+        state.winner = player
+        return player
 
     return None
 

@@ -164,6 +164,7 @@ class GameEngine:
         # 駒情報取得
         piece_data = self.state.board.get(from_pos[0], from_pos[1])
         piece_id, player = piece_data
+        already_promoted = self.state.board.get_promoted(from_pos[0], from_pos[1])
 
         # 棋譜記録用のMoveを作成
         self._kifu_move = Move(
@@ -197,9 +198,9 @@ class GameEngine:
         self._pending_move_result = result
         self._selected_piece = None
 
-        # 成り判定
+        # 成り判定（すでに成っている駒は成れない）
         piece = get_piece(piece_id)
-        if piece.promotes_to is not None:
+        if piece.promotes_to is not None and not already_promoted:
             can_promote = promotion.can_promote(
                 self.state, from_pos, to_pos, captured_piece, player
             )
