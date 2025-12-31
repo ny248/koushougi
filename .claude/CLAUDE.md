@@ -4,51 +4,74 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-広将棋 (Koushougi) GUI Battle Project - A Python GUI application for playing Koushougi (a historical Japanese board game invented by Ogyū Sorai) locally between two human players.
+広将棋 (Koushougi) GUI Battle Project - A Python application for playing Koushougi (a historical Japanese board game invented by Ogyū Sorai) with GUI and AI opponents.
 
-**Current Status**: Early prototype with basic board rendering and piece selection. Core game logic not yet implemented.
+**Current Status**: Fully playable with pygame GUI, CLI interface, and multiple AI implementations (Random, Greedy, Minimax, Neural).
 
 ## Development Commands
 
-No build system configured yet. Run the main application with:
+Run the main application:
 ```bash
-python src/main.py  # (when implemented)
+python main.py          # GUI版（pygame）
+python main.py --cli    # CLI版
 ```
 
-The project uses Python with tkinter (standard library) for GUI. No external dependencies currently.
+Run tests:
+```bash
+python -m pytest tests/unit/ -q
+```
+
+Run AI battles:
+```bash
+python scripts/battle.py
+```
+
+**Dependencies**: pygame, torch (for neural AI)
 
 ## Architecture
 
-### Planned Directory Structure
-- `src/app/` - Application startup, window management, screen transitions
-- `src/domain/` - Core game logic: Board, Pieces, Turn management
-- `src/rules/` - Rule validation and legal move generation
-- `src/ui/` - GUI rendering and user input handling
-- `src/utils/` - Shared utilities
-- `assets/` - Board images, piece images, sound effects
-- `tests/` - Unit and integration tests
+### Directory Structure
+```
+koushougi/
+├── backend/              # ゲームロジック
+│   ├── domain/           # 状態管理（Board, GameState, Kifu）
+│   │   ├── pieces/       # 57種類の駒定義（p001_将.py ～ p057_天塁.py）
+│   │   └── piece_registry.py  # 駒定義の一元管理
+│   └── rules/            # ルール処理（GameEngine, Movement, Promotion, Victory）
+├── frontend/             # UI実装
+│   ├── pygame/           # GUI（game_app.py, renderer.py, menu.py）
+│   └── cli/              # CUI（game_cli.py）
+├── ai/                   # AIプレイヤー
+│   ├── base.py           # 抽象基底クラス
+│   ├── random/           # ランダムAI
+│   ├── greedy/           # 貪欲AI（駒価値ベース）
+│   ├── minimax/          # Minimax探索AI
+│   └── neural/           # ニューラルネットワークAI
+├── scripts/              # 開発・分析用スクリプト
+│   ├── battle.py         # AI対戦実行
+│   ├── train.py          # NN訓練
+│   └── lib/              # 共有ライブラリ
+├── tests/unit/           # ユニットテスト
+├── config.py             # グローバル設定（BOARD_SIZE等）
+└── main.py               # エントリーポイント
+```
 
 ### Key Concepts
 - **19x19 intersection grid** - Pieces placed on intersections (like Go/Xiangqi), not squares
-- **34 unique piece types** - Each with distinct movement rules (see GAMERULE.md)
+- **57 piece types** - 34 base pieces + promoted forms (see GAMERULE.md)
 - **No captured piece reuse** - Unlike Shogi, captured pieces cannot be dropped back
 - **Promotion system** - Pieces promote when entering enemy territory or capturing specific pieces
 - **Win condition** - Capture opponent's 将 (General) + either 中軍/旗 (Central Army/Flag), unless 中軍 promotes to 帥
-
-### Board Rendering
-- Pieces rendered as circular stones (black/white based on owner)
-- Japanese piece names displayed as text overlay
-- Promoted pieces shown in red text
-- Opponent's pieces rotated 180 degrees for readability
+- **Phase-separated FSM** - GameEngine uses phases: PIECE_SELECT → DEST_SELECT → PROMOTION → SHOOTING
 
 ## Key Files
 
-- [GAMERULE.md](GAMERULE.md) - Complete game rules with all 34 piece movements, promotion conditions, and special abilities
-- [.codex/AGENTS.md](.codex/AGENTS.md) - AI assistant working guidelines for this project
+- [GAMERULE.md](../GAMERULE.md) - Complete game rules with all piece movements and special abilities
+- [config.py](../config.py) - Global constants (BOARD_SIZE, AI settings, GUI settings)
 
-## Working Guidelines (from .codex/AGENTS.md)
+## Working Guidelines
 
-- **Priority**: Local human-vs-human play first
+- **Priority**: Game playability and AI development
 - **Language**: Python
 - **Efficiency**: Minimize web access, store data locally, avoid redundant requests
 - **Communication**: Keep concise, confirm before major changes
@@ -91,5 +114,6 @@ promoted_id = piece.promotes_to  # 成り先ID
 |--------|------|
 | ゲームルール | `GAMERULE.md` |
 | 駒の定義 | `backend/domain/piece_registry.py` |
-| 駒の詳細 | `src/domain/pieces/*.py` |
+| 駒の詳細 | `backend/domain/pieces/*.py` |
 | 設定定数 | `config.py` |
+| 駒の価値（AI用） | `ai/greedy/piece_values.py` |
