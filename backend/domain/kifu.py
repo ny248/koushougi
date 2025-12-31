@@ -22,13 +22,15 @@ class Move:
     # 取った駒（Undo用）
     captured_piece: Optional[int] = None        # 取った駒ID
     captured_pos: Optional[tuple[int, int]] = None  # 取った位置（射撃の場合）
+    captured_was_promoted: bool = False         # 取った駒が成り状態だったか
 
     # 経路上で取った駒（霹靂・招揺用）
-    path_kills: list[tuple[tuple[int, int], int]] = field(default_factory=list)
-    # [(位置, 駒ID), ...]
+    path_kills: list[tuple[tuple[int, int], int, bool]] = field(default_factory=list)
+    # [(位置, 駒ID, is_promoted), ...]
 
     # 成りで消えた駒（毒火の道連れ用）
-    collateral_kills: list[tuple[tuple[int, int], int]] = field(default_factory=list)
+    collateral_kills: list[tuple[tuple[int, int], int, bool]] = field(default_factory=list)
+    # [(位置, 駒ID, is_promoted), ...]
 
     # 成りの連鎖（記室→軍師で前衝→前軍など）
     chain_promotions: list[tuple[tuple[int, int], int, int]] = field(default_factory=list)
@@ -49,8 +51,9 @@ class Move:
             "promoted": self.promoted,
             "captured_piece": self.captured_piece,
             "captured_pos": list(self.captured_pos) if self.captured_pos else None,
-            "path_kills": [[list(pos), pid] for pos, pid in self.path_kills],
-            "collateral_kills": [[list(pos), pid] for pos, pid in self.collateral_kills],
+            "captured_was_promoted": self.captured_was_promoted,
+            "path_kills": [[list(pos), pid, is_prom] for pos, pid, is_prom in self.path_kills],
+            "collateral_kills": [[list(pos), pid, is_prom] for pos, pid, is_prom in self.collateral_kills],
             "chain_promotions": [[list(pos), old, new] for pos, old, new in self.chain_promotions],
             "demotions": [[list(pos), old, new] for pos, old, new in self.demotions],
         }
@@ -58,6 +61,16 @@ class Move:
     @classmethod
     def from_dict(cls, data: dict) -> "Move":
         """辞書から復元"""
+        # path_killsの後方互換性: 古い形式 [pos, pid] と新形式 [pos, pid, is_prom] の両方に対応
+        path_kills_raw = data.get("path_kills", [])
+        path_kills = []
+        for item in path_kills_raw:
+            if len(item) == 3:
+                path_kills.append((tuple(item[0]), item[1], item[2]))
+            else:
+                # 古い形式: is_promoted を False とみなす
+                path_kills.append((tuple(item[0]), item[1], False))
+
         return cls(
             player=data["player"],
             move_type=data["move_type"],
@@ -67,8 +80,9 @@ class Move:
             promoted=data.get("promoted", False),
             captured_piece=data.get("captured_piece"),
             captured_pos=tuple(data["captured_pos"]) if data.get("captured_pos") else None,
-            path_kills=[(tuple(pos), pid) for pos, pid in data.get("path_kills", [])],
-            collateral_kills=[(tuple(pos), pid) for pos, pid in data.get("collateral_kills", [])],
+            captured_was_promoted=data.get("captured_was_promoted", False),
+            path_kills=path_kills,
+            collateral_kills=[(tuple(item[0]), item[1], item[2] if len(item) > 2 else False) for item in data.get("collateral_kills", [])],
             chain_promotions=[(tuple(pos), old, new) for pos, old, new in data.get("chain_promotions", [])],
             demotions=[(tuple(pos), old, new) for pos, old, new in data.get("demotions", [])],
         )

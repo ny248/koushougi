@@ -88,8 +88,8 @@ def execute_promotion(state: GameState, pos: tuple[int, int]) -> Optional[int]:
     if piece.promotes_to is None:
         return None
 
-    # 成りを実行
-    state.board.set(pos[0], pos[1], piece.promotes_to, player)
+    # 成りを実行（is_promoted=Trueでセット）
+    state.board.set(pos[0], pos[1], piece.promotes_to, player, is_promoted=True)
     return piece.promotes_to
 
 
@@ -123,12 +123,12 @@ def check_triggered_promotions(state: GameState, promoted_piece_id: int,
 
                 # 前衝(12) -> 天網(42)
                 if pid == 12:
-                    state.board.set(x, y, 42, player)
+                    state.board.set(x, y, 42, player, is_promoted=True)
                     result.append(((x, y), 12, 42))
 
                 # 後衝(13) -> 地網(43)
                 if pid == 13:
-                    state.board.set(x, y, 43, player)
+                    state.board.set(x, y, 43, player, is_promoted=True)
                     result.append(((x, y), 13, 43))
 
         # 敵の毒火(41)を破壊

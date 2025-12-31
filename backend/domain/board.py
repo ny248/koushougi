@@ -7,7 +7,8 @@ class Board:
     """19x19の盤面"""
 
     def __init__(self):
-        # grid[x][y] = (piece_id, player) or None
+        # grid[x][y] = (piece_id, player, is_promoted) or None
+        # is_promoted: この駒が成った状態かどうか
         self.grid = [[None for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
 
     def is_valid(self, x, y):
@@ -15,14 +16,31 @@ class Board:
         return 0 <= x < BOARD_SIZE and 0 <= y < BOARD_SIZE
 
     def get(self, x, y):
-        """指定位置の駒を取得。(piece_id, player) or None"""
+        """指定位置の駒を取得。(piece_id, player) or None
+
+        Note: 内部的には(piece_id, player, is_promoted)だが、
+        互換性のため(piece_id, player)を返す。is_promotedはget_promoted()で取得。
+        """
         if not self.is_valid(x, y):
             return None
-        return self.grid[x][y]
+        cell = self.grid[x][y]
+        if cell is None:
+            return None
+        # 互換性のため2要素タプルを返す
+        return (cell[0], cell[1])
 
-    def set(self, x, y, piece_id, player):
+    def get_promoted(self, x, y):
+        """指定位置の駒が成った状態かどうか"""
+        if not self.is_valid(x, y):
+            return False
+        cell = self.grid[x][y]
+        if cell is None:
+            return False
+        return cell[2] if len(cell) > 2 else False
+
+    def set(self, x, y, piece_id, player, is_promoted=False):
         """駒を配置"""
-        self.grid[x][y] = (piece_id, player)
+        self.grid[x][y] = (piece_id, player, is_promoted)
 
     def remove(self, x, y):
         """駒を除去"""
