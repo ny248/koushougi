@@ -24,10 +24,4 @@ def get_moves(pos, board, player):
 
 
 def can_promote(game_state, from_pos, to_pos, captured_piece, player):
-    # 敵陣で成れる
-    if can_promote_by_zone(from_pos, to_pos, player):
-        return True
-    # 仏狼機を取ると成れる
-    if captured_piece == 22:
-        return True
-    return False
+    return can_promote_by_zone(from_pos, to_pos, player)
