@@ -25,17 +25,25 @@ python frontend/pygame/game_app.py
 ### AI同士の対戦
 
 ```bash
-python scripts/battle.py --player1 minimax --player2 greedy --games 10
+# 基本的な対戦
+python scripts/battle.py --player1 minimax --player2 greedy -n 10
+
+# JSONL形式で棋譜を出力（学習用）
+python scripts/battle.py -p1 minimax:depth=2 -p2 random -n 100 -o data/games.jsonl --format jsonl
+
+# タイムアウト設定（デフォルト: ゲーム300秒、1手30秒）
+python scripts/battle.py -p1 random -p2 random -n 5 --game-timeout 60
 ```
 
 ### ニューラルネットワーク訓練
 
 ```bash
-# Minimaxとの対戦で強化学習
-python scripts/training/train_vs_minimax.py --games 500 --lite --eval-every 100
+# 1. 棋譜を経験データに変換
+python scripts/convert_kifu.py -i data/games.jsonl -o data/experiences.pt
 
-# 評価履歴の確認
-cat models/koushougi_rl/training_stats.json
+# 2. 経験データから学習
+python scripts/train.py supervised --data data/experiences.pt --output models/sl_v1 --lite
+python scripts/train.py reinforce --data data/experiences.pt --output models/rl_v1 --lite
 ```
 
 ### テスト
@@ -81,14 +89,13 @@ python -m pytest tests/ -v
 │       ├── player.py        # NeuralPlayer
 │       └── model.py         # 階層的NNモデル
 │
-├── scripts/                 # 訓練・分析スクリプト（開発時）
-│   ├── training/            # 訓練スクリプト
-│   │   ├── train_vs_minimax.py  # Minimax対戦による強化学習
-│   │   └── train_values.py      # 駒価値学習
-│   ├── analysis/            # 分析スクリプト
-│   │   ├── collect_kifu.py
-│   │   └── kifu_analyzer.py
-│   └── battle.py            # AI対戦評価
+├── scripts/                 # スクリプト（開発時）
+│   ├── battle.py            # AI対戦・棋譜出力
+│   ├── convert_kifu.py      # 棋譜→経験データ変換
+│   ├── train.py             # モデル訓練（教師あり/強化学習）
+│   ├── analyze.py           # 対戦結果分析
+│   ├── pipeline.py          # 対戦→変換→学習パイプライン
+│   └── lib/                 # 共通ライブラリ
 │
 ├── models/                  # 学習済みモデル
 │   └── koushougi_rl/        # 強化学習モデル
