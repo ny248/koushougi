@@ -7,3 +7,7 @@ docs/広将棋のルール紹介(網羅版) by Passatismo_Neophilia ～懐古主
 # Training data
 data/
 models/
+
+# Debug/temp files
+*.log
+game.jsonl
