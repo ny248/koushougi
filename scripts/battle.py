@@ -181,30 +181,59 @@ def _play_turn(engine, ai, player, logger):
     return True
 
 
+def _record_to_jsonl(record: GameRecord) -> str:
+    return json.dumps({
+        "game_id": record.game_id,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "players": {"sente": record.sente_name, "gote": record.gote_name},
+        "kifu": record.kifu.to_dict(),
+    }, ensure_ascii=False)
+
+
 def run_games(sente_ai, gote_ai, n_games, logger=None,
               progress_callback=None, turn_timeout=TURN_TIMEOUT_SEC,
-              game_timeout=AI_GAME_TIMEOUT_SEC):
-    """複数ゲームを実行"""
+              game_timeout=AI_GAME_TIMEOUT_SEC, output_path: Optional[Path] = None,
+              output_format: str = "json", start_from: int = 0):
+    """複数ゲームを実行
+
+    Args:
+        start_from: 開始するゲーム番号（0-indexed）。途中再開時に使用。
+    """
     records = []
     stats = {"wins": 0, "losses": 0, "draws": 0, "timeouts": 0}
 
-    for i in range(n_games):
-        record = run_game(sente_ai, gote_ai, game_id=i + 1,
-                          logger=logger, turn_timeout=turn_timeout,
-                          game_timeout=game_timeout)
-        records.append(record)
+    jsonl_file = None
+    if output_path and output_format == "jsonl":
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # 途中再開の場合は追記モード
+        mode = "a" if start_from > 0 else "w"
+        jsonl_file = open(output_path, mode, encoding="utf-8")
 
-        if record.timed_out:
-            stats["timeouts"] += 1
-        elif record.winner == 0:
-            stats["wins"] += 1
-        elif record.winner == 1:
-            stats["losses"] += 1
-        else:
-            stats["draws"] += 1
+    try:
+        for i in range(start_from, n_games):
+            record = run_game(sente_ai, gote_ai, game_id=i + 1,
+                              logger=logger, turn_timeout=turn_timeout,
+                              game_timeout=game_timeout)
+            records.append(record)
 
-        if progress_callback:
-            progress_callback(i, record, stats)
+            if jsonl_file:
+                jsonl_file.write(_record_to_jsonl(record) + "\n")
+                jsonl_file.flush()
+
+            if record.timed_out:
+                stats["timeouts"] += 1
+            elif record.winner == 0:
+                stats["wins"] += 1
+            elif record.winner == 1:
+                stats["losses"] += 1
+            else:
+                stats["draws"] += 1
+
+            if progress_callback:
+                progress_callback(i, record, stats)
+    finally:
+        if jsonl_file:
+            jsonl_file.close()
 
     return records
 
@@ -265,6 +294,16 @@ def parse_player(spec: str) -> BaseAI:
         max_moves = options.get("max_moves", 15)
         epsilon = options.get("epsilon", 0.0)
         return MinimaxPlayer(depth=depth, max_moves=max_moves, epsilon=epsilon)
+    elif name == "neural":
+        from ai.neural.player import NeuralPlayer
+        device = options.get("device", "cpu")
+        epsilon = options.get("epsilon", 0.1)
+        temperature = options.get("temperature", 1.0)
+        model_path = options.get("model")
+        player = NeuralPlayer(device=device, epsilon=epsilon, temperature=temperature)
+        if model_path:
+            player.load_checkpoint(model_path)
+        return player
     else:
         raise ValueError(f"Unknown player type: {name}")
 
@@ -272,9 +311,9 @@ def parse_player(spec: str) -> BaseAI:
 def main():
     parser = argparse.ArgumentParser(description="AI同士の対戦と棋譜出力")
     parser.add_argument("--player1", "-p1", type=str, default="random",
-                        help="先手AI (random/greedy/minimax[:depth=N:epsilon=E])")
+                        help="先手AI (random/greedy/minimax[:depth=N:epsilon=E]/neural[:model=PATH:epsilon=E])")
     parser.add_argument("--player2", "-p2", type=str, default="random",
-                        help="後手AI")
+                        help="後手AI (random/greedy/minimax[:depth=N:epsilon=E]/neural[:model=PATH:epsilon=E])")
     parser.add_argument("-n", "--games", type=int, default=10, help="対局数")
     parser.add_argument("-o", "--output", type=str, help="棋譜出力ファイル")
     parser.add_argument("--format", type=str, default="json",
@@ -310,6 +349,7 @@ def main():
                 f"(先手勝率: {win_rate:.1f}%)"
             )
 
+    output_path = Path(args.output) if args.output else None
     records = run_games(
         sente_ai, gote_ai,
         n_games=args.games,
@@ -317,6 +357,8 @@ def main():
         progress_callback=on_progress,
         turn_timeout=args.turn_timeout,
         game_timeout=args.game_timeout,
+        output_path=output_path,
+        output_format=args.format,
     )
 
     sente_wins = sum(1 for r in records if r.winner == 0 and not r.timed_out)
@@ -334,8 +376,8 @@ def main():
     logger.info(f"総時間: {total_ms:.1f}ms")
 
     if args.output:
-        output_path = Path(args.output)
-        save_records(records, output_path, format=args.format)
+        if args.format == "json":
+            save_records(records, output_path, format=args.format)
         logger.info(f"棋譜保存: {output_path} ({args.format})")
 
 
