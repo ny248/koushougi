@@ -1,6 +1,6 @@
 """五里霧（ごりむ）- ID: 44 - 高道の成り、二著する駒"""
 
-from .utils import lion_moves, shoot_targets
+from .utils import multi_step_moves, shoot_targets
 
 ID = 44
 NAME = "五里霧"
@@ -32,7 +32,9 @@ REVERT_TO = 10  # 高道
 
 def get_moves(pos, board, player):
     # 敵駒は取れない（高道・神僧以外）ので、移動可能位置のみ返す
-    return lion_moves(pos, DIRECTIONS, board, player, jump=True)
+    return multi_step_moves(pos, board, player, steps=2,
+                            first_directions=DIRECTIONS,
+                            next_directions_fn=lambda d: DIRECTIONS)
 
 
 def get_capture_filter():

@@ -1,5 +1,7 @@
 """霹靂（へきれき）- ID: 46 - 鼓の成り、縦横1マス×5回移動"""
 
+from .utils import multi_step_moves
+
 ID = 46
 NAME = "霹靂"
 READING = "へきれき"
@@ -12,75 +14,39 @@ REVERT_TO = 15  # 鼓
 ORTHOGONAL = [(1, 0), (-1, 0), (0, 1), (0, -1)]
 
 
-def _generate_all_paths():
-    """5回の縦横移動の全パターンを事前生成（4^5 = 1024通り）"""
-    paths = []
-
-    def dfs(steps, current_path):
-        if steps == 5:
-            # 相対座標列として保存
-            paths.append(list(current_path))
-            return
-        for dx, dy in ORTHOGONAL:
-            current_path.append((dx, dy))
-            dfs(steps + 1, current_path)
-            current_path.pop()
-
-    dfs(0, [])
-    return paths
-
-
-# 全経路を事前計算
-ALL_PATHS = _generate_all_paths()
-
-
 def get_moves(pos, board, player):
     """縦横1マスを5回繰り返す移動（途中では止まれない、通り道の敵を全て倒す）"""
-    x, y = pos
-    moves = set()
-
-    for path in ALL_PATHS:
-        valid = True
-        cx, cy = x, y
-        for dx, dy in path:
-            cx, cy = cx + dx, cy + dy
-            if not board.is_valid(cx, cy):
-                valid = False
-                break
-            if board.has_ally(cx, cy, player):
-                valid = False
-                break
-        if valid:
-            moves.add((cx, cy))
-
-    return list(moves)
+    return multi_step_moves(pos, board, player, steps=5,
+                            first_directions=ORTHOGONAL,
+                            next_directions_fn=lambda d: ORTHOGONAL,
+                            can_stop_early=False)
 
 
 def get_path_kills(pos, board, player, to_pos):
     """経路上の敵を取得（最初に見つかった有効経路を使用）"""
-    x, y = pos
-    tx, ty = to_pos
 
-    for path in ALL_PATHS:
-        cx, cy = x, y
-        valid = True
-        kills = []
+    def dfs(current_pos, step, kills):
+        if step == 5:
+            if current_pos == to_pos:
+                return kills
+            return None
 
-        for dx, dy in path:
-            cx, cy = cx + dx, cy + dy
-            if not board.is_valid(cx, cy):
-                valid = False
-                break
-            if board.has_ally(cx, cy, player):
-                valid = False
-                break
-            if board.has_enemy(cx, cy, player):
-                kills.append((cx, cy))
+        for dx, dy in ORTHOGONAL:
+            nx, ny = current_pos[0] + dx, current_pos[1] + dy
+            if not board.is_valid(nx, ny):
+                continue
+            if board.has_ally(nx, ny, player):
+                continue
+            new_kills = kills[:]
+            if board.has_enemy(nx, ny, player):
+                new_kills.append((nx, ny))
+            result = dfs((nx, ny), step + 1, new_kills)
+            if result is not None:
+                return result
+        return None
 
-        if valid and (cx, cy) == (tx, ty):
-            return kills
-
-    return []
+    result = dfs(pos, 0, [])
+    return result if result is not None else []
 
 
 def check_revert(game_state, pos, player):

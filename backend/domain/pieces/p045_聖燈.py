@@ -1,6 +1,6 @@
 """聖燈（しょうとう）- ID: 45 - 神僧の成り、二著する駒"""
 
-from .utils import lion_moves, shoot_targets
+from .utils import multi_step_moves, shoot_targets
 
 ID = 45
 NAME = "聖燈"
@@ -26,7 +26,9 @@ AURA_REVERT_TO = 10  # 高道
 
 
 def get_moves(pos, board, player):
-    return lion_moves(pos, DIRECTIONS, board, player, jump=True)
+    return multi_step_moves(pos, board, player, steps=2,
+                            first_directions=DIRECTIONS,
+                            next_directions_fn=lambda d: DIRECTIONS)
 
 
 def get_capture_filter():

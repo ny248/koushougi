@@ -1,6 +1,6 @@
 """虎翼（こよく）- ID: 49 - 把総の成り"""
 
-from .utils import slide_moves, lion_moves
+from .utils import slide_moves, multi_step_moves
 
 ID = 49
 NAME = "虎翼"
@@ -22,5 +22,7 @@ def get_moves(pos, board, player):
     # 縦横スライド
     moves.update(slide_moves(pos, SLIDE_DIRECTIONS, board, player))
     # 牌の動きを二著
-    moves.update(lion_moves(pos, LION_DIRECTIONS, board, player, jump=False))
+    moves.update(multi_step_moves(pos, board, player, steps=2,
+                                  first_directions=LION_DIRECTIONS,
+                                  next_directions_fn=lambda d: LION_DIRECTIONS))
     return list(moves)

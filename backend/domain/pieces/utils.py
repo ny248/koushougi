@@ -141,54 +141,54 @@ def jump_moves(pos, cells, board, player):
     return moves
 
 
-def lion_moves(pos, directions, board, player, jump=False):
-    """二著する駒（Lion移動）
-
-    1手目で移動し、2手目でさらに移動するか元の位置に戻れる。
-    1手目で止まってもよい。
-    2手で敵を2個取れるが、1手目に味方がいたら飛び越え不可。
+def multi_step_moves(pos, board, player, steps, first_directions, next_directions_fn, can_stop_early=True):
+    """複数著移動の共通処理
 
     Args:
         pos: 現在位置 (x, y)
-        directions: 移動方向リスト [(dx, dy), ...]
         board: 盤面
         player: プレイヤー (0 or 1)
-        jump: 1手目で跳び越えできるか
+        steps: 著数（移動回数）
+        first_directions: 1手目の方向リスト [(dx, dy), ...]
+        next_directions_fn: 1手目の方向 → 2手目以降の方向リスト を返す関数
+        can_stop_early: 途中で止まれるか
 
     Returns:
         移動可能な位置のリスト [(x, y), ...]
-        ※重複あり（同じ位置に複数経路で到達可能）
     """
-    x, y = pos
+    origin = pos
     moves = set()
 
-    for dx1, dy1 in directions:
-        nx1, ny1 = x + dx1, y + dy1
-        if not board.is_valid(nx1, ny1):
-            continue
+    def dfs(current_pos, step, first_dir):
+        """深さ優先探索で全経路を探索"""
+        if step == steps:
+            # 最終ステップに到達
+            if current_pos != origin:
+                moves.add(current_pos)
+            return
 
-        # 1手目に味方がいたら飛び越え不可
-        if board.has_ally(nx1, ny1, player):
-            if not jump:
+        # 方向リストを決定
+        if step == 0:
+            directions = first_directions
+        else:
+            directions = next_directions_fn(first_dir)
+
+        for dx, dy in directions:
+            nx, ny = current_pos[0] + dx, current_pos[1] + dy
+            if not board.is_valid(nx, ny):
                 continue
-            # jumpでも味方は飛び越えられない
-            continue
-
-        # 1手目で止まる
-        moves.add((nx1, ny1))
-
-        # 2手目: 1手目の位置から各方向へ
-        for dx2, dy2 in directions:
-            nx2, ny2 = nx1 + dx2, ny1 + dy2
-            if not board.is_valid(nx2, ny2):
+            if board.has_ally(nx, ny, player):
                 continue
-            if board.has_ally(nx2, ny2, player):
-                continue
-            # 元の位置に戻るのもOK
-            moves.add((nx2, ny2))
 
-    # 元の位置は除外（動かないのは無効）
-    moves.discard(pos)
+            # 途中で止まれる場合、現在位置を候補に追加
+            if can_stop_early and step >= 0 and (nx, ny) != origin:
+                moves.add((nx, ny))
+
+            # 次のステップへ
+            new_first_dir = (dx, dy) if step == 0 else first_dir
+            dfs((nx, ny), step + 1, new_first_dir)
+
+    dfs(pos, 0, None)
     return list(moves)
 
 

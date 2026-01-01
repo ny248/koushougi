@@ -1,6 +1,6 @@
 """力士（りきし）- ID: 5 - 二著する駒"""
 
-from .utils import lion_moves
+from .utils import multi_step_moves
 
 ID = 5
 NAME = "力士"
@@ -14,4 +14,6 @@ DIRECTIONS = [
 
 
 def get_moves(pos, board, player):
-    return lion_moves(pos, DIRECTIONS, board, player, jump=False)
+    return multi_step_moves(pos, board, player, steps=2,
+                            first_directions=DIRECTIONS,
+                            next_directions_fn=lambda d: DIRECTIONS)

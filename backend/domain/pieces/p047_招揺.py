@@ -1,13 +1,14 @@
 """招揺（しょうよう）- ID: 47 - 旗の成り、通り道の敵を全て倒す"""
 
+from .utils import multi_step_moves
+
 ID = 47
 NAME = "招揺"
 READING = "しょうよう"
 
-SLIDE_DIRECTIONS = [
+ORTHOGONAL = [
     (0, 1), (0, -1), (1, 0), (-1, 0),
 ]
-SLIDE_MAX = 5
 
 # 高道が死ぬと旗に戻る
 REVERT_ON_DEATH = 10  # 高道
@@ -15,21 +16,11 @@ REVERT_TO = 16  # 旗
 
 
 def get_moves(pos, board, player):
-    """縦横5路まで移動可能（通り道の敵を全て倒しながら）"""
-    x, y = pos
-    moves = []
-
-    for dx, dy in SLIDE_DIRECTIONS:
-        for dist in range(1, SLIDE_MAX + 1):
-            nx, ny = x + dx * dist, y + dy * dist
-            if not board.is_valid(nx, ny):
-                break
-            if board.has_ally(nx, ny, player):
-                break  # 味方は飛び越えられない
-            # 敵がいてもそのまま進める（通り道で倒す）
-            moves.append((nx, ny))
-
-    return moves
+    """縦横5著まで移動可能（1手目の方向に固定、通り道の敵を全て倒しながら）"""
+    return multi_step_moves(pos, board, player, steps=5,
+                            first_directions=ORTHOGONAL,
+                            next_directions_fn=lambda d: [d],
+                            can_stop_early=True)
 
 
 def get_path_kills(pos, board, player, to_pos):

@@ -1,6 +1,6 @@
 """軍師（ぐんし）- ID: 36 - 記室の成り、二著する駒"""
 
-from .utils import lion_moves
+from .utils import multi_step_moves
 
 ID = 36
 NAME = "軍師"
@@ -14,4 +14,6 @@ DIRECTIONS = [
 
 
 def get_moves(pos, board, player):
-    return lion_moves(pos, DIRECTIONS, board, player, jump=True)
+    return multi_step_moves(pos, board, player, steps=2,
+                            first_directions=DIRECTIONS,
+                            next_directions_fn=lambda d: DIRECTIONS)
