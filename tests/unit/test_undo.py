@@ -130,6 +130,74 @@ class TestUndo:
         assert engine.state.board.get(9, 9)[1] == 0  # 先手の駒
 
 
+class TestUndoToPreviousTurn:
+    """undo_to_previous_turn（待った機能）のテスト"""
+
+    def test_undo_to_previous_turn_simple(self):
+        """自分の手番の開始まで戻る"""
+        engine = GameEngine()
+
+        # 先手の1手目（select → move）
+        do_move(engine, (9, 12), (9, 11))
+        assert engine.current_player == 1  # 後手の番
+
+        # 後手の1手目
+        do_move(engine, (9, 6), (9, 7))
+        assert engine.current_player == 0  # 先手の番
+
+        # 先手の2手目
+        do_move(engine, (9, 11), (9, 10))
+        assert engine.current_player == 1  # 後手の番
+
+        # 後手の2手目
+        do_move(engine, (9, 7), (9, 8))
+        assert engine.current_player == 0  # 先手の番
+
+        # 先手が待った→後手の2手目と先手の2手目が戻る
+        # 先手の2手目のselect直前の状態（先手の番、PIECE_SELECT）に戻る
+        result = engine.undo_to_previous_turn(0)
+        assert result is True
+        assert engine.current_player == 0  # 先手の番
+        assert engine.phase == GamePhase.PIECE_SELECT
+
+        # 盤面確認：先手の先鋒は(9,11)、後手の先鋒は(9,7)
+        assert engine.state.board.get(9, 11) is not None  # 先手先鋒
+        assert engine.state.board.get(9, 7) is not None   # 後手先鋒
+        assert engine.state.board.get(9, 10) is None      # 先手2手目の位置は空
+        assert engine.state.board.get(9, 8) is None       # 後手2手目の位置は空
+
+    def test_undo_to_previous_turn_at_start(self):
+        """ゲーム開始直後の待ったは失敗する"""
+        engine = GameEngine()
+        result = engine.undo_to_previous_turn(0)
+        assert result is False
+
+    def test_undo_to_previous_turn_first_move(self):
+        """最初の1手の後の待った"""
+        engine = GameEngine()
+
+        # 先手の1手目
+        do_move(engine, (9, 12), (9, 11))
+        assert engine.current_player == 1  # 後手の番
+
+        # 後手の番では後手はまだ何も指していないのでundoできない
+        result = engine.undo_to_previous_turn(1)
+        assert result is False
+
+        # 後手の1手目
+        do_move(engine, (9, 6), (9, 7))
+        assert engine.current_player == 0  # 先手の番
+
+        # 先手が待った→先手の1手目のselect直前（初期状態）に戻る
+        result = engine.undo_to_previous_turn(0)
+        assert result is True
+        assert engine.current_player == 0  # 先手の番
+        assert engine.phase == GamePhase.PIECE_SELECT
+        # 最初の状態に戻っているはず
+        assert engine.state.board.get(9, 12) is not None  # 先手先鋒は初期位置
+        assert engine.state.board.get(9, 6) is not None   # 後手先鋒も初期位置
+
+
 class TestMinimaxWithUndo:
     """MinimaxPlayerがundo機能を使って正常に動作するかテスト"""
 

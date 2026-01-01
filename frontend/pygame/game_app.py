@@ -206,10 +206,15 @@ class GameApp:
             elif event.key == pygame.K_r:  # リセット
                 if self.config:
                     self.start_game(self.config)
-            elif event.key == pygame.K_u:  # Undo
-                self.engine.undo()
-                self.clear_selection()
-                self.status_text = "Undo"
+            elif event.key == pygame.K_u:  # Undo（待った）
+                # 自分の手番でないときは無視
+                if not self.is_human_turn():
+                    return
+                # 前回の自分の手番の開始まで戻す
+                player = self.engine.current_player
+                if self.engine.undo_to_previous_turn(player):
+                    self.clear_selection()
+                    self.status_text = "待った"
             elif event.key == pygame.K_y and self.engine.phase == GamePhase.PROMOTION:
                 # 成る
                 self.decide_promotion(promote=True)

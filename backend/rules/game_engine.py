@@ -1027,6 +1027,52 @@ class GameEngine:
         self.state.phase = GamePhase.SHOOTING
         # 手番は戻さない（ターン終了していないため）
 
+    def undo_to_previous_turn(self, player: int) -> bool:
+        """指定プレイヤーの前回の手番開始まで戻す（待った機能）
+
+        playerの前回の手番の最初のレコード（select）までさかのぼり、
+        その手番が始まる直前の状態に戻す。
+
+        棋譜を後ろから見て:
+        1. 自分のselectを見つけるまでpop
+        2. selectを見つけたらそれもpopして終了
+
+        自分のレコードが棋譜にない場合は何もしない。
+
+        Args:
+            player: 待ったをかけるプレイヤー (0=先手, 1=後手)
+
+        Returns:
+            成功したかどうか
+        """
+        if len(self.state.kifu) == 0:
+            return False
+
+        # まず自分のselectが存在するか確認
+        has_my_select = any(
+            m.player == player and m.move_type == "select"
+            for m in self.state.kifu.moves
+        )
+        if not has_my_select:
+            return False
+
+        # 自分のselectが見つかるまでundo
+        undo_count = 0
+        while len(self.state.kifu) > 0:
+            last_move = self.state.kifu.moves[-1]
+
+            is_my_select = (last_move.player == player and
+                            last_move.move_type == "select")
+
+            self.undo()
+            undo_count += 1
+
+            # 自分のselectをundoしたら終了
+            if is_my_select:
+                break
+
+        return undo_count > 0
+
     # ===================
     # 棋譜保存
     # ===================
