@@ -2,7 +2,10 @@
 
 import importlib
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .pieces.multi_step_config import MultiStepConfig
 
 
 class PieceModule:
@@ -71,6 +74,26 @@ class PieceModule:
         if not hasattr(self._module, "get_capture_immunity"):
             return []
         return self._module.get_capture_immunity()
+
+    def is_multi_step(self) -> bool:
+        """マルチステップ移動の駒か"""
+        return hasattr(self._module, "get_multi_step_config")
+
+    def get_multi_step_config(self) -> Optional["MultiStepConfig"]:
+        """マルチステップ設定を取得"""
+        if not hasattr(self._module, "get_multi_step_config"):
+            return None
+        return self._module.get_multi_step_config()
+
+    def get_next_step_options(self, current_pos: tuple[int, int], board: Any,
+                               player: int, step_index: int,
+                               first_direction: Optional[tuple[int, int]]) -> list[tuple[int, int]]:
+        """次ステップの移動先候補を取得"""
+        if not hasattr(self._module, "get_next_step_options"):
+            return []
+        return self._module.get_next_step_options(
+            current_pos, board, player, step_index, first_direction
+        )
 
 
 class PieceRegistry:

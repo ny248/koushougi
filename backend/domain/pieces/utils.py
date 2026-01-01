@@ -297,3 +297,24 @@ def area_kill_targets(pos, board, player):
             if board.is_valid(nx, ny) and board.get(nx, ny) is not None:
                 targets.append((nx, ny))
     return targets
+
+
+def get_next_step_options(pos, directions, board, player):
+    """マルチステップ移動の次ステップ候補を取得
+
+    Args:
+        pos: 現在位置 (x, y)
+        directions: 移動方向リスト [(dx, dy), ...]
+        board: 盤面
+        player: プレイヤー (0 or 1)
+
+    Returns:
+        移動可能な位置のリスト [(x, y), ...]
+    """
+    x, y = pos
+    moves = []
+    for dx, dy in directions:
+        nx, ny = x + dx, y + dy
+        if board.is_valid(nx, ny) and not board.has_ally(nx, ny, player):
+            moves.append((nx, ny))
+    return moves

@@ -1,6 +1,8 @@
 """霹靂（へきれき）- ID: 46 - 鼓の成り、縦横1マス×5回移動"""
 
 from .utils import multi_step_moves
+from .utils import get_next_step_options as _get_next_step_options
+from .multi_step_config import MultiStepConfig
 
 ID = 46
 NAME = "霹靂"
@@ -14,8 +16,29 @@ REVERT_TO = 15  # 鼓
 ORTHOGONAL = [(1, 0), (-1, 0), (0, 1), (0, -1)]
 
 
+def get_multi_step_config():
+    """マルチステップ設定"""
+    return MultiStepConfig(
+        total_steps=5,
+        can_stop_early=False,  # 途中停止不可
+        first_directions=ORTHOGONAL,
+        next_directions_fn=lambda d: ORTHOGONAL,
+        has_path_kills=True,
+    )
+
+
+def get_next_step_options(current_pos, board, player, step_index, first_direction):
+    """次ステップの移動先候補を取得"""
+    config = get_multi_step_config()
+    if step_index == 0:
+        directions = config.first_directions
+    else:
+        directions = config.next_directions_fn(first_direction)
+    return _get_next_step_options(current_pos, directions, board, player)
+
+
 def get_moves(pos, board, player):
-    """縦横1マスを5回繰り返す移動（途中では止まれない、通り道の敵を全て倒す）"""
+    """縦横1マスを5回繰り返す移動（後方互換用）"""
     return multi_step_moves(pos, board, player, steps=5,
                             first_directions=ORTHOGONAL,
                             next_directions_fn=lambda d: ORTHOGONAL,

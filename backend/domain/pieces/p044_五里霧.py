@@ -1,6 +1,8 @@
 """五里霧（ごりむ）- ID: 44 - 高道の成り、二著する駒"""
 
 from .utils import multi_step_moves, shoot_targets
+from .utils import get_next_step_options as _get_next_step_options
+from .multi_step_config import MultiStepConfig
 
 ID = 44
 NAME = "五里霧"
@@ -30,8 +32,29 @@ REVERT_RANGE = 5
 REVERT_TO = 10  # 高道
 
 
+def get_multi_step_config():
+    """マルチステップ設定"""
+    return MultiStepConfig(
+        total_steps=2,
+        can_stop_early=True,
+        first_directions=DIRECTIONS,
+        next_directions_fn=lambda d: DIRECTIONS,
+        has_path_kills=False,
+    )
+
+
+def get_next_step_options(current_pos, board, player, step_index, first_direction):
+    """次ステップの移動先候補を取得"""
+    config = get_multi_step_config()
+    if step_index == 0:
+        directions = config.first_directions
+    else:
+        directions = config.next_directions_fn(first_direction)
+    return _get_next_step_options(current_pos, directions, board, player)
+
+
 def get_moves(pos, board, player):
-    # 敵駒は取れない（高道・神僧以外）ので、移動可能位置のみ返す
+    """後方互換用"""
     return multi_step_moves(pos, board, player, steps=2,
                             first_directions=DIRECTIONS,
                             next_directions_fn=lambda d: DIRECTIONS)
