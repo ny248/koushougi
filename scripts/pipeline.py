@@ -1,6 +1,7 @@
 """訓練パイプライン
 
 JSON形式の訓練計画を読み込んで実行するオーケストレーター。
+条件分岐とループをサポート。
 
 Usage:
     # 計画ファイルから実行
@@ -29,13 +30,17 @@ from scripts.lib.logger import setup_logger
 
 SAMPLE_PLAN = {
     "name": "koushougi_training_v1",
-    "description": "広将棋AI訓練計画",
+    "description": "広将棋AI訓練計画（条件分岐・ループ対応）",
     "output_dir": "models/training_v1",
     "common": {
         "lite": True,
         "game_timeout": 60,
         "minimax_depth": 1,
         "batch_size": 64,
+    },
+    "variables": {
+        "iteration": 0,
+        "best_win_rate": 0.0,
     },
     "phases": [
         {
@@ -49,45 +54,162 @@ SAMPLE_PLAN = {
             "type": "train",
             "method": "supervised",
             "data": "bootstrap",
-            "epochs": 20,
+            "epochs": 30,
             "lr": 0.001,
         },
         {
-            "name": "selfplay_1",
-            "type": "generate",
-            "games": 200,
-            "mode": "nn-vs-minimax",
+            "name": "eval_supervised",
+            "type": "eval",
             "model": "supervised",
-            "epsilon": 0.5,
+            "games": 50,
+            "target_win_rate": 0.1,
+            "on_fail": "supervised",
         },
         {
-            "name": "reinforce_1",
-            "type": "train",
-            "method": "reinforce",
-            "data": ["bootstrap", "selfplay_1"],
-            "model": "supervised",
-            "epochs": 20,
-            "lr": 0.0001,
-        },
-        {
-            "name": "selfplay_2",
-            "type": "generate",
-            "games": 200,
-            "mode": "nn-vs-minimax",
-            "model": "reinforce_1",
-            "epsilon": 0.3,
-        },
-        {
-            "name": "reinforce_2",
-            "type": "train",
-            "method": "reinforce",
-            "data": ["bootstrap", "selfplay_1", "selfplay_2"],
-            "model": "reinforce_1",
-            "epochs": 20,
-            "lr": 0.0001,
+            "name": "selfplay_loop",
+            "type": "loop",
+            "max_iterations": 1000,
+            "phases": [
+                {
+                    "name": "selfplay_{iteration}",
+                    "type": "generate",
+                    "games": 100,
+                    "mode": "nn-vs-minimax",
+                    "model": "@latest",
+                    "epsilon": "{0.5 - iteration * 0.02}",
+                    "epsilon_min": 0.1,
+                },
+                {
+                    "name": "reinforce_{iteration}",
+                    "type": "train",
+                    "method": "reinforce",
+                    "data": "@all_games",
+                    "model": "@latest",
+                    "epochs": 10,
+                    "lr": 0.0001,
+                },
+                {
+                    "name": "eval_{iteration}",
+                    "type": "eval",
+                    "model": "reinforce_{iteration}",
+                    "games": 30,
+                    "save_if_best": True,
+                },
+            ],
         },
     ],
 }
+
+
+class PipelineContext:
+    """パイプライン実行コンテキスト"""
+
+    def __init__(self, plan: dict, output_dir: Path, logger):
+        self.plan = plan
+        self.output_dir = output_dir
+        self.logger = logger
+        self.common = plan.get("common", {})
+
+        # 進捗管理
+        self.progress_file = output_dir / "progress.json"
+        self.progress = self._load_progress()
+        self.completed = set(self.progress.get("completed", []))
+
+        # 変数
+        self.variables = plan.get("variables", {}).copy()
+        self.variables.update(self.progress.get("variables", {}))
+
+        # 動的参照
+        self.latest_model = self.progress.get("latest_model")
+        self.best_model = self.progress.get("best_model")
+        self.best_win_rate = self.progress.get("best_win_rate", 0.0)
+        self.all_game_files = self.progress.get("all_game_files", [])
+
+    def _load_progress(self) -> dict:
+        if self.progress_file.exists():
+            with open(self.progress_file) as f:
+                return json.load(f)
+        return {"completed": [], "started_at": datetime.now().isoformat()}
+
+    def save_progress(self):
+        self.progress["completed"] = list(self.completed)
+        self.progress["variables"] = self.variables
+        self.progress["latest_model"] = self.latest_model
+        self.progress["best_model"] = self.best_model
+        self.progress["best_win_rate"] = self.best_win_rate
+        self.progress["all_game_files"] = self.all_game_files
+        with open(self.progress_file, "w") as f:
+            json.dump(self.progress, f, indent=2)
+
+    def resolve_name(self, template: str) -> str:
+        """変数を展開した名前を返す"""
+        result = template
+        for key, value in self.variables.items():
+            result = result.replace(f"{{{key}}}", str(value))
+        return result
+
+    def resolve_value(self, value):
+        """値を解決（式の評価も含む）"""
+        if not isinstance(value, str):
+            return value
+
+        # 式の評価 {expr}
+        if value.startswith("{") and value.endswith("}"):
+            expr = value[1:-1]
+            try:
+                return eval(expr, {"__builtins__": {}}, self.variables)
+            except Exception:
+                return value
+
+        # 変数展開
+        return self.resolve_name(value)
+
+    def resolve_model(self, model_ref: str) -> Path:
+        """モデル参照をパスに解決"""
+        if model_ref == "@latest":
+            if self.latest_model:
+                return Path(self.latest_model)
+            return None
+        elif model_ref == "@best":
+            if self.best_model:
+                return Path(self.best_model)
+            return None
+        else:
+            resolved = self.resolve_name(model_ref)
+            # フェーズ名として解決
+            phase_path = self.output_dir / resolved / "best_model.pth"
+            if phase_path.exists():
+                return phase_path
+            # 直接パス
+            return Path(resolved) if Path(resolved).exists() else None
+
+    def resolve_data(self, data_ref) -> list[Path]:
+        """データ参照をパスリストに解決"""
+        if data_ref == "@all_games":
+            return [Path(f) for f in self.all_game_files if Path(f).exists()]
+
+        if isinstance(data_ref, str):
+            data_ref = [data_ref]
+
+        paths = []
+        for ref in data_ref:
+            resolved = self.resolve_name(ref)
+            phase_path = self.output_dir / resolved / "games.jsonl"
+            if phase_path.exists():
+                paths.append(phase_path)
+            elif Path(resolved).exists():
+                paths.append(Path(resolved))
+        return paths
+
+    def register_games(self, games_file: Path):
+        """棋譜ファイルを登録"""
+        path_str = str(games_file)
+        if path_str not in self.all_game_files:
+            self.all_game_files.append(path_str)
+
+    def update_model(self, model_path: Path):
+        """最新モデルを更新"""
+        self.latest_model = str(model_path)
 
 
 def run_command(cmd: list[str], logger, timeout: int = None) -> bool:
@@ -104,92 +226,68 @@ def run_command(cmd: list[str], logger, timeout: int = None) -> bool:
         return False
 
 
-def resolve_path(plan: dict, phase_name: str, suffix: str) -> Path:
-    """フェーズの出力パスを解決"""
-    output_dir = Path(plan["output_dir"])
-    return output_dir / phase_name / suffix
-
-
-def resolve_model_path(plan: dict, model_ref: str, completed: dict) -> Path:
-    """モデル参照をパスに解決"""
-    if model_ref in completed:
-        # 完了済みフェーズの出力を参照
-        return resolve_path(plan, model_ref, "best_model.pth")
-    else:
-        # 外部パス
-        return Path(model_ref)
-
-
-def resolve_data_paths(plan: dict, data_ref, completed: dict) -> list[Path]:
-    """データ参照をパスリストに解決"""
-    if isinstance(data_ref, str):
-        data_ref = [data_ref]
-
-    paths = []
-    for ref in data_ref:
-        if ref in completed:
-            paths.append(resolve_path(plan, ref, "games.jsonl"))
-        else:
-            paths.append(Path(ref))
-    return paths
-
-
-def run_generate_phase(plan: dict, phase: dict, completed: dict, logger) -> bool:
+def run_generate_phase(ctx: PipelineContext, phase: dict) -> bool:
     """棋譜生成フェーズを実行"""
-    common = plan.get("common", {})
-    phase_name = phase["name"]
-    output_dir = resolve_path(plan, phase_name, "")
+    phase_name = ctx.resolve_name(phase["name"])
+    output_dir = ctx.output_dir / phase_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     games_file = output_dir / "games.jsonl"
+
+    # epsilon計算
+    epsilon = ctx.resolve_value(phase.get("epsilon", 0.3))
+    epsilon_min = phase.get("epsilon_min", 0.1)
+    epsilon = max(epsilon, epsilon_min)
 
     cmd = [
         "python", "scripts/generate_games.py",
         "--games", str(phase.get("games", 100)),
         "--output", str(games_file),
         "--mode", phase.get("mode", "minimax-vs-minimax"),
-        "--minimax-depth", str(phase.get("minimax_depth", common.get("minimax_depth", 1))),
-        "--timeout", str(phase.get("game_timeout", common.get("game_timeout", 60))),
-        "--epsilon", str(phase.get("epsilon", 0.3)),
+        "--minimax-depth", str(phase.get("minimax_depth", ctx.common.get("minimax_depth", 1))),
+        "--timeout", str(phase.get("game_timeout", ctx.common.get("game_timeout", 60))),
+        "--epsilon", str(epsilon),
     ]
 
     # モデル指定
     if "model" in phase:
-        model_path = resolve_model_path(plan, phase["model"], completed)
-        if model_path.exists():
+        model_path = ctx.resolve_model(phase["model"])
+        if model_path and model_path.exists():
             cmd.extend(["--model", str(model_path)])
 
-    if common.get("lite") or phase.get("lite"):
+    if ctx.common.get("lite") or phase.get("lite"):
         cmd.append("--lite")
 
-    timeout = phase.get("games", 100) * phase.get("game_timeout", common.get("game_timeout", 60)) + 300
-    return run_command(cmd, logger, timeout=timeout)
+    timeout = phase.get("games", 100) * phase.get("game_timeout", ctx.common.get("game_timeout", 60)) + 300
+    success = run_command(cmd, ctx.logger, timeout=timeout)
+
+    if success and games_file.exists():
+        ctx.register_games(games_file)
+
+    return success
 
 
-def run_train_phase(plan: dict, phase: dict, completed: dict, logger) -> bool:
+def run_train_phase(ctx: PipelineContext, phase: dict) -> bool:
     """訓練フェーズを実行"""
-    common = plan.get("common", {})
-    phase_name = phase["name"]
-    output_dir = resolve_path(plan, phase_name, "")
+    phase_name = ctx.resolve_name(phase["name"])
+    output_dir = ctx.output_dir / phase_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     method = phase.get("method", "supervised")
 
     # データパス解決
-    data_paths = resolve_data_paths(plan, phase["data"], completed)
-    existing_paths = [p for p in data_paths if p.exists()]
-    if not existing_paths:
-        logger.error(f"データが見つかりません: {data_paths}")
+    data_paths = ctx.resolve_data(phase["data"])
+    if not data_paths:
+        ctx.logger.error(f"データが見つかりません: {phase['data']}")
         return False
 
-    # 複数データの場合、ディレクトリを指定するか最初のファイルを使用
-    if len(existing_paths) == 1:
-        data_arg = str(existing_paths[0])
+    # 複数データの場合
+    if len(data_paths) == 1:
+        data_arg = str(data_paths[0])
     else:
-        # 複数ファイルの場合、シンボリックリンクで統合ディレクトリを作成
         data_dir = output_dir / "data"
         data_dir.mkdir(exist_ok=True)
-        for i, p in enumerate(existing_paths):
+        for i, p in enumerate(data_paths):
             link = data_dir / f"{i:03d}_{p.stem}.jsonl"
             if not link.exists():
                 link.symlink_to(p.resolve())
@@ -200,21 +298,161 @@ def run_train_phase(plan: dict, phase: dict, completed: dict, logger) -> bool:
         "--data", data_arg,
         "--output", str(output_dir),
         "--epochs", str(phase.get("epochs", 20)),
-        "--batch-size", str(phase.get("batch_size", common.get("batch_size", 64))),
+        "--batch-size", str(phase.get("batch_size", ctx.common.get("batch_size", 64))),
         "--lr", str(phase.get("lr", 0.001 if method == "supervised" else 0.0001)),
     ]
 
     # モデル指定
     if "model" in phase:
-        model_path = resolve_model_path(plan, phase["model"], completed)
-        if model_path.exists():
+        model_path = ctx.resolve_model(phase["model"])
+        if model_path and model_path.exists():
             cmd.extend(["--load", str(model_path)])
 
-    if common.get("lite") or phase.get("lite"):
+    if ctx.common.get("lite") or phase.get("lite"):
         cmd.append("--lite")
 
     timeout = phase.get("epochs", 20) * 600
-    return run_command(cmd, logger, timeout=timeout)
+    success = run_command(cmd, ctx.logger, timeout=timeout)
+
+    if success:
+        best_model = output_dir / "best_model.pth"
+        if best_model.exists():
+            ctx.update_model(best_model)
+
+    return success
+
+
+def run_eval_phase(ctx: PipelineContext, phase: dict) -> dict:
+    """評価フェーズを実行
+
+    Returns:
+        {"success": bool, "win_rate": float, "passed": bool}
+    """
+    phase_name = ctx.resolve_name(phase["name"])
+    output_dir = ctx.output_dir / phase_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    games = phase.get("games", 30)
+    games_file = output_dir / "eval_games.jsonl"
+
+    # モデルで対戦
+    model_path = ctx.resolve_model(phase["model"])
+    if not model_path or not model_path.exists():
+        ctx.logger.error(f"評価モデルが見つかりません: {phase['model']}")
+        return {"success": False, "win_rate": 0, "passed": False}
+
+    cmd = [
+        "python", "scripts/generate_games.py",
+        "--games", str(games),
+        "--output", str(games_file),
+        "--mode", "nn-vs-minimax",
+        "--minimax-depth", str(phase.get("minimax_depth", ctx.common.get("minimax_depth", 1))),
+        "--timeout", str(phase.get("game_timeout", ctx.common.get("game_timeout", 60))),
+        "--epsilon", "0.0",
+        "--model", str(model_path),
+    ]
+
+    if ctx.common.get("lite") or phase.get("lite"):
+        cmd.append("--lite")
+
+    timeout = games * phase.get("game_timeout", ctx.common.get("game_timeout", 60)) + 300
+    success = run_command(cmd, ctx.logger, timeout=timeout)
+
+    if not success or not games_file.exists():
+        return {"success": False, "win_rate": 0, "passed": False}
+
+    # 勝率計算
+    stats = _collect_game_stats(games_file)
+    win_rate = stats.get("nn_win_rate", 0)
+
+    ctx.logger.info(f"評価結果: 勝率 {win_rate:.1%} ({stats['nn_wins']}/{stats['total']})")
+
+    # 結果保存
+    with open(output_dir / "eval_result.json", "w") as f:
+        json.dump({
+            "win_rate": win_rate,
+            "stats": stats,
+            "model": str(model_path),
+            "timestamp": datetime.now().isoformat(),
+        }, f, indent=2)
+
+    # ベストモデル更新
+    if phase.get("save_if_best") and win_rate > ctx.best_win_rate:
+        ctx.best_win_rate = win_rate
+        ctx.best_model = str(model_path)
+        ctx.logger.info(f"新ベスト: {win_rate:.1%}")
+
+    # 閾値チェック
+    target = phase.get("target_win_rate", 0)
+    passed = win_rate >= target
+
+    return {"success": True, "win_rate": win_rate, "passed": passed}
+
+
+def run_loop_phase(ctx: PipelineContext, phase: dict) -> bool:
+    """ループフェーズを実行"""
+    max_iterations = phase.get("max_iterations", 100)
+    inner_phases = phase.get("phases", [])
+
+    ctx.logger.info(f"ループ開始: 最大 {max_iterations} イテレーション")
+
+    for i in range(max_iterations):
+        ctx.variables["iteration"] = i
+        ctx.logger.info(f"=== イテレーション {i + 1}/{max_iterations} ===")
+
+        for inner in inner_phases:
+            result = run_phase(ctx, inner)
+
+            if isinstance(result, dict):
+                # eval結果
+                if not result["success"]:
+                    return False
+            elif not result:
+                return False
+
+        ctx.save_progress()
+
+    return True
+
+
+def run_phase(ctx: PipelineContext, phase: dict):
+    """フェーズを実行"""
+    phase_type = phase["type"]
+    phase_name = ctx.resolve_name(phase["name"])
+
+    if phase_name in ctx.completed and phase_type != "loop":
+        ctx.logger.info(f"完了済み: {phase_name}")
+        return True
+
+    ctx.logger.info(f"--- フェーズ: {phase_name} ({phase_type}) ---")
+
+    if phase_type == "generate":
+        success = run_generate_phase(ctx, phase)
+    elif phase_type == "train":
+        success = run_train_phase(ctx, phase)
+    elif phase_type == "eval":
+        result = run_eval_phase(ctx, phase)
+        if not result["success"]:
+            return False
+        if not result["passed"] and "on_fail" in phase:
+            # 閾値未達成時のジャンプ
+            ctx.logger.warning(f"閾値未達成、{phase['on_fail']} へ戻る")
+            # 該当フェーズを未完了に
+            ctx.completed.discard(phase["on_fail"])
+            return True
+        success = True
+    elif phase_type == "loop":
+        success = run_loop_phase(ctx, phase)
+    else:
+        ctx.logger.error(f"不明なフェーズタイプ: {phase_type}")
+        return False
+
+    if success:
+        ctx.completed.add(phase_name)
+        ctx.save_progress()
+        ctx.logger.info(f"完了: {phase_name}")
+
+    return success
 
 
 def run_plan(plan: dict, logger, resume_from: str = None) -> bool:
@@ -225,21 +463,15 @@ def run_plan(plan: dict, logger, resume_from: str = None) -> bool:
     output_dir = Path(plan["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 進捗ファイル
-    progress_file = output_dir / "progress.json"
-    if progress_file.exists():
-        with open(progress_file) as f:
-            progress = json.load(f)
-    else:
-        progress = {"completed": [], "started_at": datetime.now().isoformat()}
+    ctx = PipelineContext(plan, output_dir, logger)
 
-    completed = {name: True for name in progress["completed"]}
-
-    # レジューム位置を探す
+    # レジューム
     skip = resume_from is not None
-    if resume_from and resume_from not in [p["name"] for p in plan["phases"]]:
-        logger.error(f"フェーズが見つかりません: {resume_from}")
-        return False
+    if resume_from:
+        all_names = [p["name"] for p in plan["phases"]]
+        if resume_from not in all_names:
+            logger.error(f"フェーズが見つかりません: {resume_from}")
+            return False
 
     for phase in plan["phases"]:
         phase_name = phase["name"]
@@ -251,36 +483,62 @@ def run_plan(plan: dict, logger, resume_from: str = None) -> bool:
                 logger.info(f"スキップ: {phase_name}")
                 continue
 
-        if phase_name in completed:
-            logger.info(f"完了済み: {phase_name}")
-            continue
-
-        logger.info(f"--- フェーズ: {phase_name} ({phase['type']}) ---")
-
-        if phase["type"] == "generate":
-            success = run_generate_phase(plan, phase, completed, logger)
-        elif phase["type"] == "train":
-            success = run_train_phase(plan, phase, completed, logger)
-        else:
-            logger.error(f"不明なフェーズタイプ: {phase['type']}")
-            success = False
-
-        if success:
-            progress["completed"].append(phase_name)
-            completed[phase_name] = True
-            with open(progress_file, "w") as f:
-                json.dump(progress, f, indent=2)
-            logger.info(f"完了: {phase_name}")
-        else:
-            logger.error(f"失敗: {phase_name}")
+        result = run_phase(ctx, phase)
+        if isinstance(result, dict):
+            if not result["success"]:
+                return False
+        elif not result:
             return False
 
-    progress["finished_at"] = datetime.now().isoformat()
-    with open(progress_file, "w") as f:
-        json.dump(progress, f, indent=2)
+    ctx.progress["finished_at"] = datetime.now().isoformat()
+    ctx.save_progress()
 
     logger.info("=== 訓練計画完了 ===")
     return True
+
+
+def _collect_game_stats(games_file: Path) -> dict:
+    """棋譜ファイルから統計を収集"""
+    stats = {
+        "total": 0,
+        "sente_wins": 0,
+        "gote_wins": 0,
+        "draws": 0,
+        "nn_wins": 0,
+        "minimax_wins": 0,
+    }
+
+    if not games_file.exists():
+        return stats
+
+    with open(games_file) as f:
+        for line in f:
+            game = json.loads(line)
+            stats["total"] += 1
+
+            winner = game.get("kifu", {}).get("winner")
+            players = game.get("players", {})
+
+            if winner == 0:
+                stats["sente_wins"] += 1
+                if "neural" in players.get("sente", ""):
+                    stats["nn_wins"] += 1
+                else:
+                    stats["minimax_wins"] += 1
+            elif winner == 1:
+                stats["gote_wins"] += 1
+                if "neural" in players.get("gote", ""):
+                    stats["nn_wins"] += 1
+                else:
+                    stats["minimax_wins"] += 1
+            else:
+                stats["draws"] += 1
+
+    if stats["total"] > 0:
+        stats["nn_win_rate"] = stats["nn_wins"] / stats["total"]
+        stats["minimax_win_rate"] = stats["minimax_wins"] / stats["total"]
+
+    return stats
 
 
 def validate_plan(plan: dict, logger) -> bool:
@@ -293,22 +551,29 @@ def validate_plan(plan: dict, logger) -> bool:
     if "phases" not in plan or not plan["phases"]:
         errors.append("phases が必要です")
 
-    phase_names = set()
-    for i, phase in enumerate(plan.get("phases", [])):
-        if "name" not in phase:
-            errors.append(f"phases[{i}]: name が必要です")
-        elif phase["name"] in phase_names:
-            errors.append(f"phases[{i}]: 重複した名前 '{phase['name']}'")
-        else:
-            phase_names.add(phase["name"])
+    def validate_phases(phases, prefix=""):
+        for i, phase in enumerate(phases):
+            loc = f"{prefix}phases[{i}]"
+            if "name" not in phase:
+                errors.append(f"{loc}: name が必要です")
+            if "type" not in phase:
+                errors.append(f"{loc}: type が必要です")
+            elif phase["type"] not in ["generate", "train", "eval", "loop"]:
+                errors.append(f"{loc}: 不明なtype '{phase['type']}'")
 
-        if "type" not in phase:
-            errors.append(f"phases[{i}]: type が必要です")
-        elif phase["type"] not in ["generate", "train"]:
-            errors.append(f"phases[{i}]: 不明なtype '{phase['type']}'")
+            if phase.get("type") == "train" and "data" not in phase:
+                errors.append(f"{loc}: train には data が必要です")
 
-        if phase.get("type") == "train" and "data" not in phase:
-            errors.append(f"phases[{i}]: train には data が必要です")
+            if phase.get("type") == "eval" and "model" not in phase:
+                errors.append(f"{loc}: eval には model が必要です")
+
+            if phase.get("type") == "loop":
+                if "phases" not in phase:
+                    errors.append(f"{loc}: loop には phases が必要です")
+                else:
+                    validate_phases(phase["phases"], f"{loc}.")
+
+    validate_phases(plan.get("phases", []))
 
     if errors:
         for e in errors:
