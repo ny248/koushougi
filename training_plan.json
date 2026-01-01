@@ -1,0 +1,76 @@
+{
+  "name": "koushougi_training_v1",
+  "description": "広将棋AI訓練計画 - Minimax教師学習 → 無限自己対戦",
+  "output_dir": "models/training_v1",
+  "common": {
+    "lite": true,
+    "game_timeout": 120,
+    "minimax_depth": 1,
+    "batch_size": 64
+  },
+  "variables": {
+    "iteration": 0
+  },
+  "phases": [
+    {
+      "name": "bootstrap",
+      "type": "generate",
+      "games": 500,
+      "mode": "minimax-vs-minimax",
+      "comment": "Minimax同士で教師データを生成"
+    },
+    {
+      "name": "supervised",
+      "type": "train",
+      "method": "supervised",
+      "data": "bootstrap",
+      "epochs": 50,
+      "lr": 0.001,
+      "comment": "教師あり学習でベースモデルを作成"
+    },
+    {
+      "name": "eval_supervised",
+      "type": "eval",
+      "model": "supervised",
+      "games": 50,
+      "target_win_rate": 0.05,
+      "on_fail": "supervised",
+      "comment": "最低5%の勝率を達成するまで教師学習を繰り返す"
+    },
+    {
+      "name": "selfplay_loop",
+      "type": "loop",
+      "max_iterations": 10000,
+      "comment": "無限自己対戦ループ",
+      "phases": [
+        {
+          "name": "selfplay_{iteration}",
+          "type": "generate",
+          "games": 100,
+          "mode": "nn-vs-minimax",
+          "model": "@latest",
+          "epsilon": "{max(0.1, 0.5 - iteration * 0.01)}",
+          "epsilon_min": 0.1,
+          "comment": "イテレーションごとにepsilonを減衰"
+        },
+        {
+          "name": "reinforce_{iteration}",
+          "type": "train",
+          "method": "reinforce",
+          "data": "@all_games",
+          "model": "@latest",
+          "epochs": 10,
+          "lr": 0.0001
+        },
+        {
+          "name": "eval_{iteration}",
+          "type": "eval",
+          "model": "reinforce_{iteration}",
+          "games": 30,
+          "save_if_best": true,
+          "comment": "ベストモデルを追跡"
+        }
+      ]
+    }
+  ]
+}
