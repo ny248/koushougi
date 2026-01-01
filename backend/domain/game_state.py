@@ -2,18 +2,42 @@
 
 from dataclasses import dataclass, field
 from typing import Optional
+from enum import Enum, auto
 from .board import Board, BOARD_SIZE
 from .kifu import Kifu
 
 
+class GamePhase(Enum):
+    """ゲームのフェーズ"""
+    PIECE_SELECT = auto()    # 駒選択待ち
+    DEST_SELECT = auto()     # 移動先選択待ち
+    MULTI_STEP_MOVE = auto() # マルチステップ移動中
+    PROMOTION = auto()       # 成り判断待ち
+    SHOOTING = auto()        # 射撃待ち
+    GAME_OVER = auto()       # ゲーム終了
+
+
 @dataclass
 class GameState:
-    """ゲームの状態"""
+    """ゲームの状態（完全な状態を保持）
+
+    設計原則:
+    - GameStateはゲームの完全な状態を表現する
+    - GameEngineはサービスとして状態遷移を計算する
+    - GameStateを変更せず、新しいGameStateを返す
+    """
     board: Board = field(default_factory=Board)
     current_player: int = 0  # 0: 先手, 1: 後手
     move_count: int = 0
     winner: Optional[int] = None  # None: 継続中, 0: 先手勝ち, 1: 後手勝ち
     kifu: Kifu = field(default_factory=Kifu)
+
+    # フェーズ関連
+    phase: GamePhase = GamePhase.PIECE_SELECT
+    selected_piece: Optional[tuple[int, int]] = None  # 選択中の駒位置
+    pending_promotion: Optional[dict] = None  # 成り判断待ち状態
+    pending_shoot: Optional[dict] = None  # 射撃待ち状態
+    multi_step_state: Optional[dict] = None  # マルチステップ移動状態
 
     def switch_player(self) -> None:
         """手番を交代"""
@@ -38,6 +62,25 @@ class GameState:
     def has_piece_alive(self, piece_id: int, player: int) -> bool:
         """指定した駒が生きているか"""
         return len(self.get_piece_positions(piece_id, player)) > 0
+
+    def copy(self) -> "GameState":
+        """状態のディープコピーを作成"""
+        import copy
+        new_board = Board()
+        new_board.grid = [row[:] for row in self.board.grid]
+
+        return GameState(
+            board=new_board,
+            current_player=self.current_player,
+            move_count=self.move_count,
+            winner=self.winner,
+            kifu=copy.deepcopy(self.kifu),
+            phase=self.phase,
+            selected_piece=self.selected_piece,
+            pending_promotion=copy.deepcopy(self.pending_promotion) if self.pending_promotion else None,
+            pending_shoot=copy.deepcopy(self.pending_shoot) if self.pending_shoot else None,
+            multi_step_state=copy.deepcopy(self.multi_step_state) if self.multi_step_state else None,
+        )
 
 
 def create_initial_state() -> GameState:

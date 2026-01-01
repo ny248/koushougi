@@ -1,8 +1,54 @@
 """棋譜（Kifu）- ゲームの手順を記録・再生するためのクラス"""
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TextIO
+from enum import Enum
 import json
+
+
+class KifuMode(Enum):
+    """棋譜保存モード"""
+    NONE = "none"           # 保存しない
+    STREAMING = "streaming" # 1手ごとに追記（JSON Lines形式）
+    BATCH = "batch"         # 終了時に一括保存
+
+
+class KifuWriter:
+    """ストリーミング棋譜書き込み"""
+
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        self._file: Optional[TextIO] = None
+
+    def start(self) -> None:
+        """ファイルを開いてヘッダを書き込む"""
+        self._file = open(self.filepath, "w", encoding="utf-8")
+        header = {"type": "header", "version": 1}
+        self._file.write(json.dumps(header, ensure_ascii=False) + "\n")
+        self._file.flush()
+
+    def write_move(self, move: "Move") -> None:
+        """1手を追記"""
+        if self._file is None:
+            return
+        entry = {"type": "move", "data": move.to_dict()}
+        self._file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        self._file.flush()
+
+    def finish(self, winner: Optional[int], reason: Optional[str] = None) -> None:
+        """ゲーム終了時に結果を書いて閉じる"""
+        if self._file is None:
+            return
+        result = {"type": "result", "winner": winner, "reason": reason}
+        self._file.write(json.dumps(result, ensure_ascii=False) + "\n")
+        self._file.close()
+        self._file = None
+
+    def close(self) -> None:
+        """ファイルを閉じる（途中終了時用）"""
+        if self._file:
+            self._file.close()
+            self._file = None
 
 
 @dataclass
@@ -31,10 +77,6 @@ class Move:
     captured_piece: Optional[int] = None        # 取った駒ID
     captured_pos: Optional[tuple[int, int]] = None  # 取った位置（射撃の場合）
     captured_was_promoted: bool = False         # 取った駒が成り状態だったか
-
-    # 経路上で取った駒（霹靂・招揺用）
-    path_kills: list[tuple[tuple[int, int], int, bool]] = field(default_factory=list)
-    # [(位置, 駒ID, is_promoted), ...]
 
     # 成りで消えた駒（毒火の道連れ用）
     collateral_kills: list[tuple[tuple[int, int], int, bool]] = field(default_factory=list)
@@ -66,7 +108,6 @@ class Move:
             "captured_piece": self.captured_piece,
             "captured_pos": list(self.captured_pos) if self.captured_pos else None,
             "captured_was_promoted": self.captured_was_promoted,
-            "path_kills": [[list(pos), pid, is_prom] for pos, pid, is_prom in self.path_kills],
             "collateral_kills": [[list(pos), pid, is_prom] for pos, pid, is_prom in self.collateral_kills],
             "chain_promotions": [[list(pos), old, new] for pos, old, new in self.chain_promotions],
             "demotions": [[list(pos), old, new] for pos, old, new in self.demotions],
@@ -91,7 +132,6 @@ class Move:
             captured_piece=data.get("captured_piece"),
             captured_pos=tuple(data["captured_pos"]) if data.get("captured_pos") else None,
             captured_was_promoted=data.get("captured_was_promoted", False),
-            path_kills=[(tuple(item[0]), item[1], item[2]) for item in data.get("path_kills", [])],
             collateral_kills=[(tuple(item[0]), item[1], item[2]) for item in data.get("collateral_kills", [])],
             chain_promotions=[(tuple(pos), old, new) for pos, old, new in data.get("chain_promotions", [])],
             demotions=[(tuple(pos), old, new) for pos, old, new in data.get("demotions", [])],
