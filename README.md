@@ -1,14 +1,15 @@
 # 広将棋 (Koushougi)
 
-広将棋を人間同士またはAIと対戦できるプロジェクトです。
+広将棋を人間同士またはAIと対戦できるプロジェクトです。Pygame GUIと複数AI、棋譜出力、学習パイプラインまでを含みます。
 
-## 概要
+## 特徴
 
 - 19x19の盤面で34種類の駒を使う歴史的な将棋variant
 - Pygame GUIでの対戦
 - 複数のAIプレイヤー（Random, Greedy, Minimax, Neural）
+- 棋譜(JSONL)と学習データ変換
 
-## インストール
+## セットアップ
 
 ```bash
 pip install pygame torch
@@ -52,22 +53,66 @@ python scripts/train.py reinforce --data data/experiences.pt --output models/rl_
 python -m pytest tests/ -v
 ```
 
-## ディレクトリ構成
+## アーキテクチャ
+
+### オブジェクトの分類
+
+このプロジェクトでは、オブジェクトを**サービス**と**やりとりされるオブジェクト**に厳格に分離します。
+
+#### サービス（状態を持たない、渡されない）
+
+状態遷移を計算する純粋関数群。インスタンス化して渡すのではなく、関数として呼び出す。
+
+| サービス | 役割 |
+|----------|------|
+| `GameEngine` | 状態遷移の計算（`apply_move(state, action) -> new_state`） |
+| `movement` | 合法手の計算 |
+| `promotion` | 成り判定 |
+| `victory` | 勝敗判定 |
+
+#### やりとりされるオブジェクト（状態を持つ、渡される）
+
+ゲームの状態を表現するデータ。関数間で受け渡しされる。
+
+| オブジェクト | 役割 |
+|--------------|------|
+| `GameState` | ゲームの完全な状態（Board, Player, Phase, Kifu） |
+| `Board` | 19x19の盤面 |
+| `Kifu` | 棋譜 |
+| `Move` | 1手の記録 |
+
+#### 設計原則
+
+```
+AIは GameState を受け取り、手を選び、新しい GameState を得る。
+GameEngine はサービスとして「この状態でこの手を指したらどうなるか」を計算する。
+GameState を変更するのではなく、新しい GameState を返す。
+```
+
+```python
+# 良い例: GameStateを渡して新しいGameStateを得る
+new_state = GameEngine.apply_action(state, action)
+
+# 悪い例: GameEngineを渡して内部状態を変更する
+engine.apply_action(action)  # 内部のstateが変更される
+```
+
+### ディレクトリ構成
 
 ```
 .
 ├── backend/                 # ゲームロジック
-│   ├── domain/              # 盤面・駒・ゲーム状態
-│   │   ├── board.py
-│   │   ├── game_state.py
-│   │   ├── kifu.py          # 棋譜（undo用）
+│   ├── domain/              # やりとりされるオブジェクト
+│   │   ├── board.py         # Board（盤面）
+│   │   ├── game_state.py    # GameState（状態の完全な表現）
+│   │   ├── kifu.py          # Kifu, Move（棋譜）
 │   │   ├── piece_registry.py
 │   │   └── pieces/          # 34種+成り駒の定義
-│   └── rules/               # ルール処理
-│       ├── game_engine.py   # フェーズ分離型ゲームエンジン
-│       ├── movement.py
-│       ├── promotion.py
-│       └── victory.py
+│   └── rules/               # サービス（状態遷移計算）
+│       ├── game_engine.py   # GameEngine
+│       ├── movement.py      # 合法手計算
+│       ├── promotion.py     # 成り判定
+│       └── victory.py       # 勝敗判定
 │
 ├── frontend/                # UI
 │   └── pygame/              # Pygame GUI
@@ -75,139 +120,101 @@ python -m pytest tests/ -v
 │       ├── renderer.py
 │       └── menu.py
 │
-├── ai/                      # AIプレイヤー（実行時）
+├── ai/                      # AIプレイヤー
 │   ├── base.py              # BaseAI抽象クラス
-│   ├── random/              # ランダムAI
-│   │   └── player.py
-│   ├── greedy/              # Greedy AI（駒価値ベース）
-│   │   ├── player.py
-│   │   └── piece_values.py
-│   ├── minimax/             # Minimax AI（Alpha-Beta枝刈り）
-│   │   ├── player.py
-│   │   └── evaluator.py
-│   └── neural/              # ニューラルネットワークAI
-│       ├── player.py        # NeuralPlayer
-│       └── model.py         # 階層的NNモデル
+│   ├── random/
+│   ├── greedy/
+│   ├── minimax/
+│   └── neural/
 │
-├── scripts/                 # スクリプト（開発時）
+├── scripts/                 # 開発用スクリプト
 │   ├── battle.py            # AI対戦・棋譜出力
 │   ├── convert_kifu.py      # 棋譜→経験データ変換
-│   ├── train.py             # モデル訓練（教師あり/強化学習）
-│   ├── analyze.py           # 対戦結果分析
-│   ├── pipeline.py          # 対戦→変換→学習パイプライン
+│   ├── train.py             # モデル訓練
 │   └── lib/                 # 共通ライブラリ
 │
 ├── models/                  # 学習済みモデル
-│   └── koushougi_rl/        # 強化学習モデル
-│       ├── checkpoint_*.pth
-│       ├── final_model.pth
-│       └── training_stats.json  # 評価履歴
-│
 ├── tests/
-│   └── unit/
 ├── docs/
-│   └── notes/
 ├── GAMERULE.md              # 完全なゲームルール
 └── config.py
 ```
 
-## アーキテクチャ
-
 ### ゲーム状態モデル
 
-ゲーム状態は3要素の組で表される:
+ゲーム状態は3要素の組で表されます。
 
 ```
 State = (Board, Player, Phase)
 ```
 
-- **Board**: 19x19の盤面（各マスに駒情報または空）
+- **Board**: 19x19の盤面
 - **Player**: 手番（0=先手, 1=後手）
-- **Phase**: 現在のフェーズ（属性付き）
+- **Phase**: 現在のフェーズ（`GamePhase`）
 
 ### フェーズ
 
-フェーズは「次にどのような選択が可能か」を決定する:
-
-| Phase | 説明 | 主な属性 |
-|-------|------|----------|
-| `PieceSelect` | 駒選択 | - |
-| `DestSelect` | 移動先選択 | selected_piece |
-| `MultiStep` | マルチステップ移動中 | current_pos, remaining_steps |
-| `Promotion` | 成り判断 | piece_pos, promotes_to |
-| `Shooting` | 射撃 | shooter_pos, remaining_shots |
-| `GameOver` | 終了 | winner, reason |
-
-### 設計原則
-
-1. **駒定義ファイル**（`pieces/*.py`）は各フェーズでの選択肢を計算するための情報源
-2. **棋譜**は状態遷移ごとに1エントリ記録
-3. **undo()**は直前の1エントリをpopし、対応する遷移を逆転
+| Phase            | 説明                 | 主な属性                     |
+| ---------------- | -------------------- | ---------------------------- |
+| `PIECE_SELECT`   | 駒選択               | -                            |
+| `DEST_SELECT`    | 移動先選択           | selected_piece               |
+| `MULTI_STEP_MOVE`| マルチステップ移動中 | current_pos, remaining_steps |
+| `PROMOTION`      | 成り判断             | piece_pos, promotes_to       |
+| `SHOOTING`       | 射撃                 | shooter_pos, remaining_shots |
+| `GAME_OVER`      | 終了                 | winner, reason               |
 
 ### GameEngine API
 
-- `select_piece()`: 動かす駒を選択
-- `select_destination()`: 移動先を選択
-- `select_next_step()`: マルチステップの次の移動先を選択
-- `stop_move()`: マルチステップを途中で停止
-- `decide_promotion()`: 成るか否かを決定
-- `shoot()` / `skip_shoot()`: 射撃
+GameEngineはサービスとして、GameStateとアクションを受け取り、新しいGameStateを返す。
+
+```python
+# 状態遷移
+new_state = GameEngine.select_piece(state, pos)
+new_state = GameEngine.select_destination(state, pos)
+new_state = GameEngine.decide_promotion(state, promote=True)
+new_state = GameEngine.shoot(state, target)
+
+# 情報取得（純粋関数）
+moves = GameEngine.get_legal_moves(state, pos)
+pieces = GameEngine.get_movable_pieces(state)
+```
 
 ### AIインターフェース
 
-全てのAIは`BaseAI`を継承し、フェーズごとに決定を行う：
+AIはGameStateを受け取り、アクションを返す。
 
 ```python
 class BaseAI(ABC):
-    def choose_piece(self, engine) -> tuple[int, int]
-    def choose_destination(self, engine) -> tuple[int, int]
-    def choose_promotion(self, engine) -> bool
-    def choose_shoot_target(self, engine) -> Optional[tuple[int, int]]
-    def play_step(self, engine) -> bool  # 1状態遷移を処理
+    def choose_action(self, state: GameState) -> Action:
+        """現在の状態から最善のアクションを選択"""
+        pass
+```
+
+探索AIの場合:
+```python
+# Minimax探索
+def search(state: GameState, depth: int) -> tuple[Action, float]:
+    if depth == 0 or GameEngine.is_game_over(state):
+        return None, evaluate(state)
+
+    best_action = None
+    best_value = float('-inf')
+
+    for action in GameEngine.get_legal_actions(state):
+        new_state = GameEngine.apply_action(state, action)
+        _, value = search(new_state, depth - 1)
+        if value > best_value:
+            best_value = value
+            best_action = action
+
+    return best_action, best_value
 ```
 
 ### 階層的ニューラルネットワーク
 
-フェーズごとに専用のポリシーヘッドを持つ軽量アーキテクチャ：
+フェーズごとに専用のポリシーヘッドを持つ軽量アーキテクチャです。
 
 - 入力: 118チャンネル（駒配置 + メタ情報）
 - 共有バックボーン: CNN + ResBlocks
 - 出力ヘッド: piece(361), dest(361), promo(2), shoot(362)
 - パラメータ数: 約650万（軽量版）
-
-## 主要機能
-
-### 実装済み
-
-- 34種類の駒の移動ルール
-- 成り・成り戻り
-- 勝利条件（将+中軍/旗の捕獲）
-- 特殊能力（射撃、経路上捕獲、周囲破壊など）
-- 棋譜ベースのUndo
-- Pygame GUI
-- AI（Random, Greedy, Minimax, Neural）
-- Minimax対戦による強化学習
-- 定期評価による性能追跡
-
-## ゲームルール
-
-詳細は [GAMERULE.md](GAMERULE.md) を参照。
-
-### 勝利条件
-
-相手の「将」と「中軍」（または「旗」）を両方取ると勝利。ただし「中軍」が「帥」に成ると単独で勝利条件駒になる。
-
-### 駒の種類
-
-| カテゴリ | 駒 |
-|---------|-----|
-| 指揮 | 将, 記室, 参謀, 中軍, 鼓, 旗 |
-| 護衛 | 親兵, 力士, 舎人, 舎餘, 護兵 |
-| 将校 | 軍吏, 軍匠, 高道, 神僧, 把総, 百総, 千総, 騎総 |
-| 前線 | 前衝, 後衝, 先鋒 |
-| 兵科 | 歩兵, 歩総, 馬兵, 牌, 牌総, 車, 車総, 象 |
-| 射撃 | 弓, 弩, 砲, 仏狼機 |
-
-## ライセンス
-
-MIT License

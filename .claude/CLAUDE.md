@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**注意: README.md と CLAUDE.md は別物**
+- `README.md`: プロジェクトの設計思想・アーキテクチャ・使い方を記述（人間向け）
+- `CLAUDE.md`: Claude Code への指示・作業ガイドライン（AI向け）
+
+設計やアーキテクチャの変更は README.md に反映すること。
+
 ## Project Overview
 
 広将棋 (Koushougi) GUI Battle Project - A Python application for playing Koushougi (a historical Japanese board game invented by Ogyū Sorai) with GUI and AI opponents.
@@ -30,38 +36,55 @@ python scripts/battle.py
 
 ## Architecture
 
+### オブジェクトの分類
+
+**サービス（状態を持たない、渡されない）**:
+- `GameEngine` - 状態遷移を計算する純粋関数群
+- `movement` - 合法手計算
+- `promotion` - 成り判定
+- `victory` - 勝敗判定
+
+**やりとりされるオブジェクト（状態を持つ、渡される）**:
+- `GameState` - ゲームの完全な状態（Board, Player, Phase, Kifu）
+- `Board` - 19x19の盤面
+- `Kifu` - 棋譜
+
+**設計原則**:
+```
+AIは GameState を受け取り、手を選び、新しい GameState を得る。
+GameEngine はサービスとして「この状態でこの手を指したらどうなるか」を計算する。
+GameState を変更するのではなく、新しい GameState を返す。
+```
+
 ### Directory Structure
 ```
 koushougi/
 ├── backend/              # ゲームロジック
-│   ├── domain/           # 状態管理（Board, GameState, Kifu）
-│   │   ├── pieces/       # 57種類の駒定義（p001_将.py ～ p057_天塁.py）
-│   │   └── piece_registry.py  # 駒定義の一元管理
-│   └── rules/            # ルール処理（GameEngine, Movement, Promotion, Victory）
+│   ├── domain/           # やりとりされるオブジェクト
+│   │   ├── game_state.py # GameState（状態の完全な表現）
+│   │   ├── board.py      # Board（盤面）
+│   │   ├── kifu.py       # Kifu（棋譜）
+│   │   ├── pieces/       # 57種類の駒定義
+│   │   └── piece_registry.py
+│   └── rules/            # サービス（状態遷移計算）
+│       ├── game_engine.py
+│       ├── movement.py
+│       ├── promotion.py
+│       └── victory.py
 ├── frontend/             # UI実装
-│   ├── pygame/           # GUI（game_app.py, renderer.py, menu.py）
-│   └── cli/              # CUI（game_cli.py）
+│   ├── pygame/           # GUI
+│   └── cli/              # CUI
 ├── ai/                   # AIプレイヤー
 │   ├── base.py           # 抽象基底クラス
-│   ├── random/           # ランダムAI
-│   ├── greedy/           # 貪欲AI（駒価値ベース）
-│   ├── minimax/          # Minimax探索AI
-│   └── neural/           # ニューラルネットワークAI
+│   ├── random/
+│   ├── greedy/
+│   ├── minimax/
+│   └── neural/
 ├── scripts/              # 開発・分析用スクリプト
-│   ├── battle.py         # AI対戦実行
-│   ├── train.py          # NN訓練
-│   └── lib/              # 共有ライブラリ
 ├── tests/unit/           # ユニットテスト
-├── config.py             # グローバル設定（BOARD_SIZE等）
+├── config.py             # グローバル設定
 └── main.py               # エントリーポイント
 ```
-
-### Key Concepts
-- **19x19 intersection grid** - Pieces placed on intersections (like Go/Xiangqi), not squares
-- **57 piece types** - 34 base pieces + promoted forms (see GAMERULE.md)
-- **No captured piece reuse** - Unlike Shogi, captured pieces cannot be dropped back
-- **Promotion system** - Pieces promote when entering enemy territory or capturing specific pieces
-- **Win condition** - Capture opponent's 将 (General) + either 中軍/旗 (Central Army/Flag), unless 中軍 promotes to 帥
 
 ### Game State Model
 
@@ -82,12 +105,12 @@ koushougi/
 | `Shooting` | 射撃 | `shooter_pos`, `targets`, `remaining_shots` |
 | `GameOver` | 終了 | `winner`, `reason` |
 
-**設計原則**:
-1. 駒定義ファイル（`pieces/*.py`）は各フェーズでの選択肢を計算するための情報源
-2. 棋譜は状態遷移ごとに1エントリ記録
-3. `undo()`は直前の1エントリをpopし、対応する遷移を逆転
-
-詳細: [docs/notes/kifu_and_undo_design.md](../docs/notes/kifu_and_undo_design.md)
+### Key Concepts
+- **19x19 intersection grid** - Pieces placed on intersections (like Go/Xiangqi), not squares
+- **57 piece types** - 34 base pieces + promoted forms (see GAMERULE.md)
+- **No captured piece reuse** - Unlike Shogi, captured pieces cannot be dropped back
+- **Promotion system** - Pieces promote when entering enemy territory or capturing specific pieces
+- **Win condition** - Capture opponent's 将 (General) + either 中軍/旗 (Central Army/Flag), unless 中軍 promotes to 帥
 
 ## Key Files
 
@@ -109,29 +132,22 @@ koushougi/
 
 ## アンチパターン
 
+### 確認なしの実装禁止
+
+ユーザーが指示していない機能や関数を勝手に実装してはならない。特に：
+
+- 新しいヘルパー関数やユーティリティの追加
+- アルゴリズムの「改善」や「最適化」
+- 「便利そう」という理由での機能追加
+
+**必ずユーザーに確認を取ってから実装すること。**
+
+無能な働き者が一番害悪。確認を怠って勝手に動くな。
+
 ### 二重管理の禁止
 
 駒の定義（ID、名前、成り先、移動パターンなど）は `backend/domain/` に一元管理されている。
 他の場所で同じ情報を再定義してはならない。
-
-**悪い例:**
-```python
-# ai/greedy/piece_values.py で成り関係を再定義
-PROMOTION_MAP = {
-    1: 35,   # 将 → 帥
-    2: 36,   # 記室 → 軍師
-    ...
-}
-```
-
-**良い例:**
-```python
-# backend/domain/piece_registry から取得
-from backend.domain.piece_registry import get_piece
-
-piece = get_piece(piece_id)
-promoted_id = piece.promotes_to  # 成り先ID
-```
 
 ### データの権威ある出典
 
