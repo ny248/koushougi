@@ -38,5 +38,14 @@ def after_move(game_state, from_pos, to_pos, player):
                             immune=SHOOT_IMMUNE,
                             min_range=SHOOT_MIN_RANGE)
     if targets:
-        return {"shoot": {"targets": targets, "count": SHOOT_COUNT}}
+        return {"shoot": {
+            "targets": targets,
+            "count": SHOOT_COUNT,
+            "params": {
+                "shoot_range": SHOOT_RANGE,
+                "penetrate": False,
+                "immune": SHOOT_IMMUNE,
+                "min_range": SHOOT_MIN_RANGE,
+            }
+        }}
     return None

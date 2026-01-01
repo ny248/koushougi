@@ -6,6 +6,7 @@ from enum import Enum, auto
 from backend.domain.game_state import GameState, create_initial_state
 from backend.domain.kifu import Move, Kifu
 from backend.domain.piece_registry import get_piece
+from backend.domain.pieces.utils import shoot_targets
 from . import movement, promotion, victory
 
 
@@ -578,6 +579,7 @@ class GameEngine:
                     "targets": effect["shoot"]["targets"],
                     "count": shoot_count,
                     "remaining": shoot_count,  # 残り射撃回数
+                    "params": effect["shoot"].get("params"),  # 再計算用パラメータ
                 }
                 result.can_shoot = True
                 self._phase = GamePhase.SHOOTING
@@ -642,18 +644,34 @@ class GameEngine:
         # 残り回数を減らす
         shoot_info["remaining"] -= 1
 
-        # ターゲットリストから撃った駒を除外
-        shoot_info["targets"] = [t for t in shoot_info["targets"] if t != target]
-
         result = MoveResult(
             success=True,
             path_kills=killed,
         )
 
-        # まだ射撃回数が残っていて、ターゲットもある場合は射撃フェーズを継続
-        if shoot_info["remaining"] > 0 and shoot_info["targets"]:
-            result.can_shoot = True
-            return result
+        # まだ射撃回数が残っている場合はターゲットを再計算
+        if shoot_info["remaining"] > 0:
+            params = shoot_info.get("params")
+            if params:
+                # パラメータがある場合は再計算
+                new_targets = shoot_targets(
+                    shoot_info["pos"],
+                    self.state.board,
+                    player,
+                    shoot_range=params.get("shoot_range", 1),
+                    penetrate=params.get("penetrate", False),
+                    penetrate_block=params.get("penetrate_block"),
+                    immune=params.get("immune"),
+                    min_range=params.get("min_range"),
+                )
+                shoot_info["targets"] = new_targets
+            else:
+                # 後方互換: パラメータがない場合は撃った駒を除外するだけ
+                shoot_info["targets"] = [t for t in shoot_info["targets"] if t != target]
+
+            if shoot_info["targets"]:
+                result.can_shoot = True
+                return result
 
         # 射撃終了
         self._pending_shoot = None

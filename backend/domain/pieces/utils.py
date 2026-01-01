@@ -192,6 +192,31 @@ def multi_step_moves(pos, board, player, steps, first_directions, next_direction
     return list(moves)
 
 
+def _is_near_enemy_gorimui(pos, board, player, range_limit=5):
+    """敵の五里霧から指定距離以内にいるかチェック
+
+    Args:
+        pos: 現在位置 (x, y)
+        board: 盤面
+        player: プレイヤー (0 or 1)
+        range_limit: 距離（デフォルト5路）
+
+    Returns:
+        敵の五里霧が範囲内にいればTrue
+    """
+    GORIMUI_ID = 44  # 五里霧のID
+    x, y = pos
+    enemy = 1 - player
+    for ex in range(19):
+        for ey in range(19):
+            piece = board.get(ex, ey)
+            if piece and piece[0] == GORIMUI_ID and piece[1] == enemy:
+                dist = max(abs(ex - x), abs(ey - y))
+                if dist <= range_limit:
+                    return True
+    return False
+
+
 def shoot_targets(pos, board, player, shoot_range, penetrate=False,
                   penetrate_block=None, immune=None, min_range=None):
     """射撃可能な対象を取得
@@ -209,6 +234,10 @@ def shoot_targets(pos, board, player, shoot_range, penetrate=False,
     Returns:
         射撃可能な位置のリスト [(x, y), ...]
     """
+    # 敵の五里霧から5路以内にいる場合、射撃不可
+    if _is_near_enemy_gorimui(pos, board, player):
+        return []
+
     if immune is None:
         immune = []
     if penetrate_block is None:

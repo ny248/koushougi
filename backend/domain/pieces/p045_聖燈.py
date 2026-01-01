@@ -64,7 +64,14 @@ def after_move(game_state, from_pos, to_pos, player):
     """移動後に射撃（1路射×2）"""
     targets = shoot_targets(to_pos, game_state.board, player,
                             shoot_range=SHOOT_RANGE, penetrate=True)
-    return {"shoot": {"targets": targets, "count": SHOOT_COUNT}}
+    return {"shoot": {
+        "targets": targets,
+        "count": SHOOT_COUNT,
+        "params": {
+            "shoot_range": SHOOT_RANGE,
+            "penetrate": True,
+        }
+    }}
 
 
 def get_aura_effect():
