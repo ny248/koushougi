@@ -86,6 +86,7 @@ class MinimaxPlayer(BaseAI):
         """現在の状態で最善のアクションを探索
 
         GameStateをコピーして探索を行う。元のstateは変更しない。
+        Alpha-Beta枝刈りを使用。
         """
         actions = self._get_actions_from_state(state)
         if not actions:
@@ -94,6 +95,8 @@ class MinimaxPlayer(BaseAI):
         player = state.current_player
         best_actions = []
         best_value = float('-inf')
+        alpha = float('-inf')
+        beta = float('inf')
 
         logger.debug(f"_search_best_action開始: player={player}, phase={state.phase}")
 
@@ -110,9 +113,9 @@ class MinimaxPlayer(BaseAI):
 
             logger.debug(f"  action={action} apply成功: phase={search_state.phase}")
 
-            # Minimax探索（プレイヤーが変わったかでmaximizingを決定）
+            # Alpha-Beta探索（プレイヤーが変わったかでmaximizingを決定）
             next_maximizing = search_state.current_player == player
-            value = self._minimax(search_state, self.depth - 1, next_maximizing, player)
+            value = self._alphabeta(search_state, self.depth - 1, alpha, beta, next_maximizing, player)
 
             logger.debug(f"    value={value}")
 
@@ -122,15 +125,30 @@ class MinimaxPlayer(BaseAI):
             elif value == best_value:
                 best_actions.append(action)
 
+            # alphaを更新（ルートノードはmaximizing）
+            alpha = max(alpha, value)
+
         logger.debug(f"_search_best_action終了: best_value={best_value}")
 
         return random.choice(best_actions) if best_actions else None
 
-    def _minimax(self, state: GameState, depth: int,
-                 maximizing: bool, original_player: int) -> float:
-        """Minimax（GameStateコピー方式）
+    def _alphabeta(self, state: GameState, depth: int,
+                   alpha: float, beta: float,
+                   maximizing: bool, original_player: int) -> float:
+        """Alpha-Beta枝刈り付きMinimax
 
-        stateは呼び出し元で既にコピーされているので、直接変更可能。
+        Args:
+            state: 探索対象の状態（コピー済み）
+            depth: 残り探索深さ
+            alpha: 最大化側の下限値
+            beta: 最小化側の上限値
+            maximizing: 最大化ノードかどうか
+            original_player: 評価の基準となるプレイヤー
+
+        Note:
+            広将棋では1ターン内に複数のアクションがあるため、
+            アクションごとに手番が変わるわけではない。
+            手番の変化は current_player の変化で検知する。
         """
         # 終了条件
         if depth == 0 or state.winner is not None:
@@ -153,7 +171,14 @@ class MinimaxPlayer(BaseAI):
 
                 # プレイヤーが変わったときだけmaximizingを切り替える
                 next_maximizing = child_state.current_player == original_player
-                value = max(value, self._minimax(child_state, depth - 1, next_maximizing, original_player))
+                value = max(value, self._alphabeta(
+                    child_state, depth - 1, alpha, beta, next_maximizing, original_player
+                ))
+
+                # Alpha-Beta枝刈り
+                alpha = max(alpha, value)
+                if alpha >= beta:
+                    break  # Beta cut-off
 
             return value
         else:
@@ -169,7 +194,14 @@ class MinimaxPlayer(BaseAI):
 
                 # プレイヤーが変わったときだけmaximizingを切り替える
                 next_maximizing = child_state.current_player == original_player
-                value = min(value, self._minimax(child_state, depth - 1, next_maximizing, original_player))
+                value = min(value, self._alphabeta(
+                    child_state, depth - 1, alpha, beta, next_maximizing, original_player
+                ))
+
+                # Alpha-Beta枝刈り
+                beta = min(beta, value)
+                if alpha >= beta:
+                    break  # Alpha cut-off
 
             return value
 
