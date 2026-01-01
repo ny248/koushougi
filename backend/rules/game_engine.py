@@ -586,7 +586,7 @@ class GameEngine:
             if "area_kill" in effect:
                 # 周囲破壊は自動実行
                 killed = movement.execute_area_kill(
-                    self.state, to_pos, effect["area_kill"], self._kifu_move.player
+                    self.state, effect["area_kill"], self._kifu_move.player
                 )
                 result.path_kills.extend(killed)
                 self._kifu_move.collateral_kills = killed
@@ -633,7 +633,7 @@ class GameEngine:
 
         # 射撃実行
         player = self.current_player
-        killed = movement.execute_shoot(self.state, shoot_info["pos"], [target], player)
+        killed = movement.execute_shoot(self.state, [target], player)
 
         # 棋譜に射撃情報を追加
         for pos, piece_id, is_prom in killed:

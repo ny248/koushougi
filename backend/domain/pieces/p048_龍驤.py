@@ -37,7 +37,7 @@ def get_next_step_options(current_pos, board, player, step_index, first_directio
 
 
 def get_moves(pos, board, player):
-    """後方互換用"""
+    """スライド移動 + 二著の移動先リストを取得"""
     moves = set()
     # 千総の動き（8方向スライド）
     moves.update(slide_moves(pos, DIRECTIONS, board, player))

@@ -164,13 +164,12 @@ def _execute_kills(state: GameState, targets: list[tuple[int, int]],
     return killed
 
 
-def execute_shoot(state: GameState, shooter_pos: tuple[int, int],
-                  targets: list[tuple[int, int]], player: int) -> list[tuple[tuple[int, int], int, bool]]:
+def execute_shoot(state: GameState, targets: list[tuple[int, int]],
+                  player: int) -> list[tuple[tuple[int, int], int, bool]]:
     """射撃を実行
 
     Args:
         state: ゲーム状態
-        shooter_pos: 射撃する駒の位置（未使用だが互換性のため維持）
         targets: 射撃対象の位置リスト
         player: プレイヤー
 
@@ -180,13 +179,12 @@ def execute_shoot(state: GameState, shooter_pos: tuple[int, int],
     return _execute_kills(state, targets, player, enemy_only=True)
 
 
-def execute_area_kill(state: GameState, pos: tuple[int, int],
-                      targets: list[tuple[int, int]], player: int) -> list[tuple[tuple[int, int], int, bool]]:
+def execute_area_kill(state: GameState, targets: list[tuple[int, int]],
+                      player: int) -> list[tuple[tuple[int, int], int, bool]]:
     """周囲破壊を実行（毒火用）
 
     Args:
         state: ゲーム状態
-        pos: 毒火の位置（未使用だが互換性のため維持）
         targets: 破壊対象の位置リスト
         player: プレイヤー
 

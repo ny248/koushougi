@@ -49,7 +49,7 @@ def get_next_step_options(current_pos, board, player, step_index, first_directio
 
 
 def get_moves(pos, board, player):
-    """桂馬飛び後、縦横の同じ方向に桂馬飛びするか1手目で止まる（後方互換用）"""
+    """桂馬飛び後、縦横の同じ方向に桂馬飛びするか1手目で止まる"""
     return multi_step_moves(pos, board, player, steps=2,
                             first_directions=KNIGHT_MOVES,
                             next_directions_fn=_next_directions)

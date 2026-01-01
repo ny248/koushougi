@@ -37,7 +37,7 @@ def get_next_step_options(current_pos, board, player, step_index, first_directio
 
 
 def get_moves(pos, board, player):
-    """後方互換用"""
+    """移動先リストを取得"""
     return multi_step_moves(pos, board, player, steps=2,
                             first_directions=DIRECTIONS,
                             next_directions_fn=lambda d: DIRECTIONS)

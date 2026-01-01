@@ -41,7 +41,7 @@ def get_next_step_options(current_pos, board, player, step_index, first_directio
 
 
 def get_moves(pos, board, player):
-    """斜めスライド + 縦横1マスを二著（後方互換用）"""
+    """斜めスライド + 縦横1マスを二著"""
     moves = set()
 
     # 斜めスライド

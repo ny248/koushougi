@@ -18,15 +18,13 @@ class Board:
     def get(self, x, y):
         """指定位置の駒を取得。(piece_id, player) or None
 
-        Note: 内部的には(piece_id, player, is_promoted)だが、
-        互換性のため(piece_id, player)を返す。is_promotedはget_promoted()で取得。
+        Note: is_promotedはget_promoted()で個別に取得する。
         """
         if not self.is_valid(x, y):
             return None
         cell = self.grid[x][y]
         if cell is None:
             return None
-        # 互換性のため2要素タプルを返す
         return (cell[0], cell[1])
 
     def get_promoted(self, x, y):

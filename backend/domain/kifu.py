@@ -61,16 +61,6 @@ class Move:
     @classmethod
     def from_dict(cls, data: dict) -> "Move":
         """辞書から復元"""
-        # path_killsの後方互換性: 古い形式 [pos, pid] と新形式 [pos, pid, is_prom] の両方に対応
-        path_kills_raw = data.get("path_kills", [])
-        path_kills = []
-        for item in path_kills_raw:
-            if len(item) == 3:
-                path_kills.append((tuple(item[0]), item[1], item[2]))
-            else:
-                # 古い形式: is_promoted を False とみなす
-                path_kills.append((tuple(item[0]), item[1], False))
-
         return cls(
             player=data["player"],
             move_type=data["move_type"],
@@ -81,8 +71,8 @@ class Move:
             captured_piece=data.get("captured_piece"),
             captured_pos=tuple(data["captured_pos"]) if data.get("captured_pos") else None,
             captured_was_promoted=data.get("captured_was_promoted", False),
-            path_kills=path_kills,
-            collateral_kills=[(tuple(item[0]), item[1], item[2] if len(item) > 2 else False) for item in data.get("collateral_kills", [])],
+            path_kills=[(tuple(item[0]), item[1], item[2]) for item in data.get("path_kills", [])],
+            collateral_kills=[(tuple(item[0]), item[1], item[2]) for item in data.get("collateral_kills", [])],
             chain_promotions=[(tuple(pos), old, new) for pos, old, new in data.get("chain_promotions", [])],
             demotions=[(tuple(pos), old, new) for pos, old, new in data.get("demotions", [])],
         )

@@ -39,7 +39,7 @@ def get_next_step_options(current_pos, board, player, step_index, first_directio
 
 
 def get_moves(pos, board, player):
-    """縦横5著まで移動可能（後方互換用）"""
+    """縦横5著まで移動可能"""
     return multi_step_moves(pos, board, player, steps=5,
                             first_directions=ORTHOGONAL,
                             next_directions_fn=lambda d: [d],

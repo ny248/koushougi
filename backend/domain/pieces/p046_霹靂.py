@@ -38,7 +38,7 @@ def get_next_step_options(current_pos, board, player, step_index, first_directio
 
 
 def get_moves(pos, board, player):
-    """縦横1マスを5回繰り返す移動（後方互換用）"""
+    """縦横1マスを5回繰り返す移動"""
     return multi_step_moves(pos, board, player, steps=5,
                             first_directions=ORTHOGONAL,
                             next_directions_fn=lambda d: ORTHOGONAL,
