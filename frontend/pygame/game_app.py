@@ -2,9 +2,22 @@
 
 import pygame
 import sys
+import logging
 from typing import Optional
 from enum import Enum
 from backend.rules.game_engine import GameEngine, GamePhase
+
+# ログ設定
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+    handlers=[
+        logging.FileHandler('game_debug.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('GameApp')
+from backend.domain.kifu import KifuMode
 from frontend.pygame.renderer import BoardRenderer, InfoPanel
 from frontend.pygame.menu import MenuScreen, GameConfig, PlayerType
 from ai.minimax.player import MinimaxPlayer
@@ -19,8 +32,9 @@ class AppState(Enum):
 class GameApp:
     """GUIアプリケーション"""
 
-    def __init__(self):
+    def __init__(self, kifu_path: Optional[str] = None):
         pygame.init()
+        self._kifu_path = kifu_path
 
         # レンダラー
         self.board_renderer = BoardRenderer(cell_size=GUI_CELL_SIZE, margin=GUI_MARGIN)
@@ -94,13 +108,23 @@ class GameApp:
             self.draw()
             pygame.display.flip()
 
+        # アプリ終了時にエンジンをクローズ（棋譜保存）
+        if self.engine:
+            self.engine.close()
         pygame.quit()
         sys.exit()
 
     def start_game(self, config: GameConfig):
         """ゲーム開始"""
         self.config = config
-        self.engine = GameEngine()
+        # 前のゲームのエンジンをクローズ
+        if self.engine:
+            self.engine.close()
+        # 棋譜保存モード設定
+        if self._kifu_path:
+            self.engine = GameEngine(kifu_mode=KifuMode.STREAMING, kifu_path=self._kifu_path)
+        else:
+            self.engine = GameEngine()
         self.clear_selection()
         self.app_state = AppState.PLAYING
         self.ai_thinking = False
@@ -144,9 +168,20 @@ class GameApp:
 
         # AIが1ステップ処理（相手の手番になるまで繰り返す）
         current_player = self.engine.current_player
+        logger.info(f"[AI開始] player={current_player}, phase={self.engine.phase}")
+        step = 0
         while not self.engine.is_game_over and self.engine.current_player == current_player:
-            if not self.ai.play_step(self.engine):
+            step += 1
+            before_player = self.engine.current_player
+            before_phase = self.engine.phase
+            result = self.ai.play_step(self.engine)
+            after_player = self.engine.current_player
+            after_phase = self.engine.phase
+            logger.info(f"  step{step}: before=({before_player},{before_phase}) -> after=({after_player},{after_phase}), result={result}")
+            if not result:
+                logger.warning(f"  play_step returned False, breaking")
                 break
+        logger.info(f"[AI終了] player={self.engine.current_player}, phase={self.engine.phase}, steps={step}")
         self.clear_selection()
 
         # 結果表示
@@ -449,9 +484,9 @@ class GameApp:
             self.screen.blit(self.panel_surface, (self.board_renderer.surface_size, 0))
 
 
-def main():
+def main(kifu_path: Optional[str] = None):
     """エントリーポイント"""
-    app = GameApp()
+    app = GameApp(kifu_path=kifu_path)
     app.run()
 
 
