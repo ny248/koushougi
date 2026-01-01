@@ -172,56 +172,12 @@ def _play_turn_with_timeout(engine, ai, player, logger, timeout):
 
 
 def _play_turn(engine, ai, player, logger):
-    if engine.phase != GamePhase.PIECE_SELECT:
-        return False
-
-    piece_pos = ai.choose_piece(engine)
-    if not engine.select_piece(piece_pos):
-        if logger:
-            logger.log_error(f"select_piece failed: {piece_pos}")
-        return False
-
-    if logger:
-        logger.log_turn(player, "PIECE", f"{piece_pos}")
-
-    dest_pos = ai.choose_destination(engine)
-    result = engine.select_destination(dest_pos)
-    if not result.success:
-        if logger:
-            logger.log_error(f"select_destination failed: {dest_pos}")
-        return False
-
-    if logger:
-        logger.log_turn(player, "DEST", f"{dest_pos}")
-
-    if engine.phase == GamePhase.PROMOTION:
-        promote = ai.choose_promotion(engine)
-        result = engine.decide_promotion(promote)
-        if not result.success:
+    """1ターン分を処理（相手の手番になるまでplay_stepを繰り返す）"""
+    while not engine.is_game_over and engine.current_player == player:
+        if not ai.play_step(engine):
             if logger:
-                logger.log_error(f"decide_promotion failed")
+                logger.log_error(f"play_step failed at phase {engine.phase}")
             return False
-        if logger:
-            logger.log_turn(player, "PROMO", f"{'成' if promote else '不成'}")
-
-    while engine.phase == GamePhase.SHOOTING:
-        target = ai.choose_shoot_target(engine)
-        if target:
-            result = engine.shoot(target)
-            if not result.success:
-                if logger:
-                    logger.log_error(f"shoot failed: {target}")
-                return False
-            if logger:
-                logger.log_turn(player, "SHOOT", f"{target}")
-            if not result.can_shoot:
-                break
-        else:
-            engine.skip_shoot()
-            if logger:
-                logger.log_turn(player, "SHOOT", "skip")
-            break
-
     return True
 
 

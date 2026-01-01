@@ -142,8 +142,11 @@ class GameApp:
         if self.ai_delay_timer < self.ai_delay_ms:
             return
 
-        # AIがplay_turnで1ターン分を処理
-        self.ai.play_turn(self.engine)
+        # AIが1ステップ処理（相手の手番になるまで繰り返す）
+        current_player = self.engine.current_player
+        while not self.engine.is_game_over and self.engine.current_player == current_player:
+            if not self.ai.play_step(self.engine):
+                break
         self.clear_selection()
 
         # 結果表示

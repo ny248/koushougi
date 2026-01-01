@@ -113,18 +113,45 @@ python -m pytest tests/ -v
 
 ## アーキテクチャ
 
-### フェーズ分離型ゲームエンジン
+### ゲーム状態モデル
 
-ゲームの状態遷移を明確なフェーズで管理：
+ゲーム状態は3要素の組で表される:
 
 ```
-PIECE_SELECT → DEST_SELECT → PROMOTION → SHOOTING → (次のターン)
+State = (Board, Player, Phase)
 ```
+
+- **Board**: 19x19の盤面（各マスに駒情報または空）
+- **Player**: 手番（0=先手, 1=後手）
+- **Phase**: 現在のフェーズ（属性付き）
+
+### フェーズ
+
+フェーズは「次にどのような選択が可能か」を決定する:
+
+| Phase | 説明 | 主な属性 |
+|-------|------|----------|
+| `PieceSelect` | 駒選択 | - |
+| `DestSelect` | 移動先選択 | selected_piece |
+| `MultiStep` | マルチステップ移動中 | current_pos, remaining_steps |
+| `Promotion` | 成り判断 | piece_pos, promotes_to |
+| `Shooting` | 射撃 | shooter_pos, remaining_shots |
+| `GameOver` | 終了 | winner, reason |
+
+### 設計原則
+
+1. **駒定義ファイル**（`pieces/*.py`）は各フェーズでの選択肢を計算するための情報源
+2. **棋譜**は状態遷移ごとに1エントリ記録
+3. **undo()**は直前の1エントリをpopし、対応する遷移を逆転
+
+### GameEngine API
 
 - `select_piece()`: 動かす駒を選択
 - `select_destination()`: 移動先を選択
+- `select_next_step()`: マルチステップの次の移動先を選択
+- `stop_move()`: マルチステップを途中で停止
 - `decide_promotion()`: 成るか否かを決定
-- `shoot()` / `skip_shoot()`: 射撃（複数回可能な駒もある）
+- `shoot()` / `skip_shoot()`: 射撃
 
 ### AIインターフェース
 
@@ -136,7 +163,7 @@ class BaseAI(ABC):
     def choose_destination(self, engine) -> tuple[int, int]
     def choose_promotion(self, engine) -> bool
     def choose_shoot_target(self, engine) -> Optional[tuple[int, int]]
-    def play_turn(self, engine) -> bool  # 1ターン分を自動処理
+    def play_step(self, engine) -> bool  # 1状態遷移を処理
 ```
 
 ### 階層的ニューラルネットワーク

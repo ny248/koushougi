@@ -84,68 +84,40 @@ class BaseAI(ABC):
         """
         pass
 
-    def play_turn(self, engine: GameEngine) -> bool:
-        """1ターンをプレイ（フェーズに応じて自動で処理）
+    def play_step(self, engine: GameEngine) -> bool:
+        """1状態遷移を処理
 
         Args:
             engine: ゲームエンジン
 
         Returns:
-            ターンが正常に完了したか
+            成功したか
         """
-        # フェーズ1: 駒選択
-        if engine.phase != GamePhase.PIECE_SELECT:
-            return False
+        phase = engine.phase
 
-        piece_pos = self.choose_piece(engine)
-        if not engine.select_piece(piece_pos):
-            return False
+        if phase == GamePhase.PIECE_SELECT:
+            pos = self.choose_piece(engine)
+            return engine.select_piece(pos)
 
-        # フェーズ2: 移動先選択
-        dest_pos = self.choose_destination(engine)
-        result = engine.select_destination(dest_pos)
-        if not result.success:
-            return False
+        elif phase == GamePhase.DEST_SELECT:
+            pos = self.choose_destination(engine)
+            return engine.select_destination(pos).success
 
-        # フェーズ2.5: マルチステップ移動（必要な場合）
-        while engine.phase == GamePhase.MULTI_STEP_MOVE:
-            # 停止可能なら停止判断
-            if engine.can_stop_now():
-                if self.choose_stop(engine):
-                    result = engine.stop_move()
-                    if not result.success:
-                        return False
-                    break
+        elif phase == GamePhase.MULTI_STEP_MOVE:
+            if engine.can_stop_now() and self.choose_stop(engine):
+                return engine.stop_move().success
+            pos = self.choose_next_step(engine)
+            return engine.select_next_step(pos).success
 
-            # 次のステップを選択
-            next_pos = self.choose_next_step(engine)
-            result = engine.select_next_step(next_pos)
-            if not result.success:
-                return False
-
-            # ステップ完了でループ継続（まだMULTI_STEP_MOVEならループ続行）
-
-        # フェーズ3: 成り判断（必要な場合）
-        if engine.phase == GamePhase.PROMOTION:
+        elif phase == GamePhase.PROMOTION:
             promote = self.choose_promotion(engine)
-            result = engine.decide_promotion(promote)
-            if not result.success:
-                return False
+            return engine.decide_promotion(promote).success
 
-        # フェーズ4: 射撃（必要な場合、複数回可能）
-        while engine.phase == GamePhase.SHOOTING:
+        elif phase == GamePhase.SHOOTING:
             target = self.choose_shoot_target(engine)
             if target:
-                result = engine.shoot(target)
-                if not result.success:
-                    return False
-                # まだ射撃可能ならループ継続
-                if not result.can_shoot:
-                    break
+                return engine.shoot(target).success
             else:
-                result = engine.skip_shoot()
-                if not result.success:
-                    return False
-                break
+                return engine.skip_shoot().success
 
-        return True
+        return False
