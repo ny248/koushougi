@@ -69,8 +69,8 @@ class GameApp:
         # ゲームエンジン
         self.engine = GameEngine()
 
-        # AI (Minimax depth=3)
-        self.ai = get_ai_player("minimax", depth=3, max_moves=15)
+        # AI (Minimax depth=4)
+        self.ai = get_ai_player("minimax", depth=4, max_moves=15)
 
         # UI状態
         self.selected_pos: Optional[tuple[int, int]] = None
