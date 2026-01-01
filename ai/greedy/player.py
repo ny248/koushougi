@@ -1,8 +1,16 @@
-"""貪欲AI - 最も価値の高い駒を取る（フェーズ分離型）"""
+"""貪欲AI - 最も価値の高い駒を取る"""
 
 import random
 from typing import Optional
-from backend.rules.game_engine import GameEngine
+from backend.rules.game_engine import GameEngine, GamePhase
+from backend.domain.game_state import GameState
+from backend.domain.action import (
+    Action, SelectPieceAction, SelectDestinationAction,
+    StopMoveAction, SelectNextStepAction,
+    DecidePromotionAction, ShootAction, SkipShootAction
+)
+from backend.rules import movement
+from backend.domain.piece_registry import get_piece
 from ai.base import BaseAI
 from ai.greedy.piece_values import get_piece_value, get_promotion_value, select_best_shoot_target
 
@@ -19,23 +27,46 @@ class GreedyPlayer(BaseAI):
         self._best_destination: Optional[tuple[int, int]] = None
         self._should_promote: bool = False
 
-    def choose_piece(self, engine: GameEngine) -> tuple[int, int]:
+    def choose_action(self, state: GameState) -> Action:
+        """現在の状態から次のアクションを選択"""
+        phase = state.phase
+
+        if phase == GamePhase.PIECE_SELECT:
+            return self._choose_piece_action(state)
+        elif phase == GamePhase.DEST_SELECT:
+            return self._choose_dest_action(state)
+        elif phase == GamePhase.MULTI_STEP_MOVE:
+            return self._choose_multi_step_action(state)
+        elif phase == GamePhase.PROMOTION:
+            return self._choose_promotion_action(state)
+        elif phase == GamePhase.SHOOTING:
+            return self._choose_shoot_action(state)
+        else:
+            return SelectPieceAction(pos=(0, 0))
+
+    def _choose_piece_action(self, state: GameState) -> Action:
         """最も価値の高い手が打てる駒を選択"""
-        movable = engine.get_movable_pieces()
+        player = state.current_player
+        movable = []
+        for x in range(19):
+            for y in range(19):
+                piece_data = state.board.get(x, y)
+                if piece_data and piece_data[1] == player:
+                    moves = movement.get_legal_moves(state, (x, y))
+                    if moves:
+                        movable.append((x, y))
+
         if not movable:
-            return (0, 0)  # フェールセーフ
+            return SelectPieceAction(pos=(0, 0))
 
         # ε確率でランダム
         if random.random() < self.epsilon:
             piece = random.choice(movable)
-            # ランダムな移動先も決める
-            engine.select_piece(piece)
-            dests = engine.get_legal_destinations()
-            engine.cancel_piece_selection()
-            if dests:
-                self._best_destination = random.choice(dests)
+            moves = movement.get_legal_moves(state, piece)
+            if moves:
+                self._best_destination = random.choice(moves)
                 self._should_promote = random.choice([True, False])
-            return piece
+            return SelectPieceAction(pos=piece)
 
         # 全ての駒×移動先の組み合わせを評価
         best_value = float('-inf')
@@ -44,19 +75,17 @@ class GreedyPlayer(BaseAI):
         best_promote = False
 
         for piece_pos in movable:
-            engine.select_piece(piece_pos)
-            destinations = engine.get_legal_destinations()
-            engine.cancel_piece_selection()
-
-            piece_data = engine.state.board.get(piece_pos[0], piece_pos[1])
+            piece_data = state.board.get(piece_pos[0], piece_pos[1])
             if not piece_data:
                 continue
             piece_id, _ = piece_data
 
+            destinations = movement.get_legal_moves(state, piece_pos)
+
             for to_pos in destinations:
                 # 駒取りの価値
                 value = 0
-                target = engine.state.board.get(to_pos[0], to_pos[1])
+                target = state.board.get(to_pos[0], to_pos[1])
                 if target:
                     target_id, _ = target
                     value += get_piece_value(target_id)
@@ -78,56 +107,73 @@ class GreedyPlayer(BaseAI):
 
         self._best_destination = best_dest
         self._should_promote = best_promote
-        return best_piece
+        return SelectPieceAction(pos=best_piece)
 
-    def choose_destination(self, engine: GameEngine) -> tuple[int, int]:
+    def _choose_dest_action(self, state: GameState) -> Action:
         """事前に計算した最適な移動先を返す"""
         if self._best_destination:
-            return self._best_destination
+            return SelectDestinationAction(pos=self._best_destination)
 
         # フォールバック: ランダム
-        dests = engine.get_legal_destinations()
-        return random.choice(dests) if dests else (0, 0)
+        if state.selected_piece:
+            dests = movement.get_legal_moves(state, state.selected_piece)
+            if dests:
+                return SelectDestinationAction(pos=random.choice(dests))
+        return SelectDestinationAction(pos=(0, 0))
 
-    def choose_promotion(self, engine: GameEngine) -> bool:
-        """成るかどうか（基本的に成る）"""
-        return self._should_promote or True  # Greedyは基本的に成る
-
-    def choose_shoot_target(self, engine: GameEngine) -> Optional[tuple[int, int]]:
-        """最も価値の高い駒を射撃"""
-        targets = engine.get_shoot_targets()
-        return select_best_shoot_target(targets, engine.state.board)
-
-    def choose_next_step(self, engine: GameEngine) -> tuple[int, int]:
+    def _choose_multi_step_action(self, state: GameState) -> Action:
         """最も価値の高い駒を取れるステップを選択"""
-        options = engine.get_next_step_options()
+        if state.multi_step_state is None:
+            return StopMoveAction()
+
+        ms_state = state.multi_step_state
+
+        # 次のステップの選択肢を取得
+        piece = get_piece(ms_state["piece_id"])
+        step_index = piece.get_multi_step_config().total_steps - ms_state["remaining_steps"]
+        options = piece.get_next_step_options(
+            ms_state["current_pos"],
+            state.board,
+            state.current_player,
+            step_index,
+            ms_state.get("first_direction")
+        )
+
         if not options:
-            return (0, 0)
+            if ms_state.get("can_stop_early", False):
+                return StopMoveAction()
+            return SelectNextStepAction(pos=(0, 0))
 
         # 敵を取れるステップを優先
         best_option = options[0]
         best_value = 0
+        has_target = False
+
         for pos in options:
-            target = engine.state.board.get(pos[0], pos[1])
+            target = state.board.get(pos[0], pos[1])
             if target:
+                has_target = True
                 target_id, _ = target
                 value = get_piece_value(target_id)
                 if value > best_value:
                     best_value = value
                     best_option = pos
 
-        return best_option
+        # 取れる駒がなく、停止可能なら停止
+        if not has_target and ms_state.get("can_stop_early", False):
+            return StopMoveAction()
 
-    def choose_stop(self, engine: GameEngine) -> bool:
-        """停止するか選択: 残りステップで取れる駒がなければ停止"""
-        if not engine.can_stop_now():
-            return False
+        return SelectNextStepAction(pos=best_option)
 
-        # 次のステップで取れる駒があるか確認
-        options = engine.get_next_step_options()
-        for pos in options:
-            target = engine.state.board.get(pos[0], pos[1])
-            if target:
-                return False  # 取れる駒があるなら続行
+    def _choose_promotion_action(self, state: GameState) -> Action:
+        """成るかどうか（基本的に成る）"""
+        return DecidePromotionAction(promote=self._should_promote or True)
 
-        return True  # 取れる駒がないなら停止
+    def _choose_shoot_action(self, state: GameState) -> Action:
+        """最も価値の高い駒を射撃"""
+        if state.pending_shoot:
+            targets = state.pending_shoot.get("targets", [])
+            best = select_best_shoot_target(targets, state.board)
+            if best:
+                return ShootAction(target=best)
+        return SkipShootAction()

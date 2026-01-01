@@ -6,10 +6,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+from config import LOG_LEVEL
+
 
 def setup_logger(
     name: str = "koushougi",
-    level: int = logging.INFO,
+    level: int = LOG_LEVEL,
     log_file: Optional[Path] = None,
     console: bool = True,
 ) -> logging.Logger:

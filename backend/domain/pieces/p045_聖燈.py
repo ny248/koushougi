@@ -21,11 +21,6 @@ ONLY_CAPTURE = [10, 11]  # 高道, 神僧
 SHOOT_RANGE = 1
 SHOOT_COUNT = 2
 
-# オーラ効果: 5路以内の敵の五里霧を高道に戻す
-AURA_TARGET = 44  # 五里霧
-AURA_RANGE = 5
-AURA_REVERT_TO = 10  # 高道
-
 
 def get_multi_step_config():
     """マルチステップ設定"""
@@ -72,12 +67,3 @@ def after_move(game_state, from_pos, to_pos, player):
             "penetrate": True,
         }
     }}
-
-
-def get_aura_effect():
-    """オーラ効果情報"""
-    return {
-        "target": AURA_TARGET,
-        "range": AURA_RANGE,
-        "revert_to": AURA_REVERT_TO,
-    }

@@ -5,7 +5,6 @@ import sys
 from typing import Optional
 from backend.rules.game_engine import GameEngine
 from backend.domain.piece_registry import get_piece
-from backend.rules import promotion
 
 
 class GameCLI:
@@ -151,10 +150,7 @@ class GameCLI:
                         "name": name
                     }
 
-        captured = {
-            "0": list(self.engine.state.captured.get(0) or []),
-            "1": list(self.engine.state.captured.get(1) or [])
-        }
+        captured = {"0": [], "1": []}
 
         pending_shoot = None
         shoot_targets = self.engine.get_shoot_targets()
@@ -207,19 +203,7 @@ class GameCLI:
 
     def _can_promote(self, from_pos: tuple[int, int], to_pos: tuple[int, int]) -> bool:
         """成れるか判定"""
-        piece_data = self.engine.state.board.get(from_pos[0], from_pos[1])
-        if piece_data is None:
-            return False
-
-        piece_id, player = piece_data
-        piece = get_piece(piece_id)
-        if piece.promotes_to is None:
-            return False
-
-        target = self.engine.state.board.get(to_pos[0], to_pos[1])
-        captured_piece = target[0] if target else None
-
-        return promotion.can_promote(self.engine.state, from_pos, to_pos, captured_piece, player)
+        return self.engine.can_promote_at(from_pos, to_pos)
 
     def show_help(self):
         """ヘルプ表示"""
@@ -463,19 +447,6 @@ class GameCLI:
 
         turn = "先手" if self.engine.current_player == 0 else "後手"
         print(f"\n{turn}番")
-
-        for player in [0, 1]:
-            name = "先手" if player == 0 else "後手"
-            captured = self.engine.state.captured.get(player)
-            if captured:
-                pieces = []
-                for pid in captured[:10]:
-                    try:
-                        pieces.append(get_piece(pid).name)
-                    except:
-                        pass
-                if pieces:
-                    print(f"{name}の持ち駒: {' '.join(pieces)}")
 
 
 def main():

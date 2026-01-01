@@ -13,9 +13,16 @@ from backend.domain.game_state import GameState, GamePhase, create_initial_state
 from backend.domain.kifu import Move, Kifu, KifuMode, KifuWriter
 from backend.domain.piece_registry import get_piece
 from backend.domain.pieces.utils import shoot_targets
+from backend.domain.action import (
+    Action, SelectPieceAction, SelectDestinationAction,
+    StopMoveAction, SelectNextStepAction,
+    DecidePromotionAction, ShootAction, SkipShootAction
+)
 from . import movement, promotion, victory
+from config import LOG_LEVEL
 
 logger = logging.getLogger('GameEngine')
+logger.setLevel(LOG_LEVEL)
 
 # 後方互換性のためGamePhaseを再エクスポート
 __all__ = ['GameEngine', 'GamePhase', 'MoveResult']
@@ -561,6 +568,16 @@ class GameEngine:
         """現在成り判断待ちか"""
         return self.state.phase == GamePhase.PROMOTION
 
+    def can_promote_at(self, from_pos: tuple[int, int], to_pos: tuple[int, int]) -> bool:
+        """指定の移動で成れるか判定"""
+        piece_data = self.state.board.get(from_pos[0], from_pos[1])
+        if piece_data is None:
+            return False
+        piece_id, player = piece_data
+        target = self.state.board.get(to_pos[0], to_pos[1])
+        captured_piece = target[0] if target else None
+        return promotion.can_promote(self.state, from_pos, to_pos, captured_piece, player)
+
     def decide_promotion(self, promote: bool) -> MoveResult:
         """成り判断
 
@@ -1041,3 +1058,41 @@ class GameEngine:
     def get_legal_moves(self, pos: tuple[int, int]) -> list[tuple[int, int]]:
         """合法手を取得（ユーティリティ）"""
         return movement.get_legal_moves(self.state, pos)
+
+    # ===================
+    # Action適用
+    # ===================
+
+    def apply_action(self, action: Action) -> MoveResult:
+        """Actionを適用して状態遷移を行う
+
+        Args:
+            action: 適用するアクション
+
+        Returns:
+            MoveResult: 操作結果
+        """
+        if isinstance(action, SelectPieceAction):
+            success = self.select_piece(action.pos)
+            return MoveResult(success=success)
+
+        elif isinstance(action, SelectDestinationAction):
+            return self.select_destination(action.pos)
+
+        elif isinstance(action, StopMoveAction):
+            return self.stop_move()
+
+        elif isinstance(action, SelectNextStepAction):
+            return self.select_next_step(action.pos)
+
+        elif isinstance(action, DecidePromotionAction):
+            return self.decide_promotion(action.promote)
+
+        elif isinstance(action, ShootAction):
+            return self.shoot(action.target)
+
+        elif isinstance(action, SkipShootAction):
+            return self.skip_shoot()
+
+        else:
+            raise ValueError(f"Unknown action type: {type(action)}")

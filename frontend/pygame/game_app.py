@@ -20,7 +20,7 @@ logger = logging.getLogger('GameApp')
 from backend.domain.kifu import KifuMode
 from frontend.pygame.renderer import BoardRenderer, InfoPanel
 from frontend.pygame.menu import MenuScreen, GameConfig, PlayerType
-from ai.minimax.player import MinimaxPlayer
+from ai import get_ai_player
 from config import GUI_AI_DELAY_MS, GUI_CELL_SIZE, GUI_MARGIN, GUI_PANEL_WIDTH
 
 
@@ -70,7 +70,7 @@ class GameApp:
         self.engine = GameEngine()
 
         # AI (Minimax depth=3)
-        self.ai = MinimaxPlayer(depth=3, max_moves=15)
+        self.ai = get_ai_player("minimax", depth=3, max_moves=15)
 
         # UI状態
         self.selected_pos: Optional[tuple[int, int]] = None

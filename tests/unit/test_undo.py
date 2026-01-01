@@ -144,34 +144,37 @@ class TestMinimaxWithUndo:
         initial_grid = [row[:] for row in engine.state.board.grid]
         initial_player = engine.current_player
 
-        # AIに駒を選ばせる（探索が行われる）
-        piece_pos = ai.choose_piece(engine)
+        # AIにアクションを選ばせる（探索が行われる）
+        action = ai.choose_action(engine.state)
 
         # 探索後も盤面が変わっていないこと
         assert engine.state.board.grid == initial_grid
         assert engine.current_player == initial_player
 
-        # 手は選べていること
-        assert piece_pos is not None
+        # アクションは選べていること
+        assert action is not None
 
     def test_minimax_returns_valid_move(self):
         """Minimaxが合法手を返すこと"""
         from ai.minimax.player import MinimaxPlayer
+        from backend.domain.action import SelectPieceAction, SelectDestinationAction
 
         engine = GameEngine()
         ai = MinimaxPlayer(depth=2, max_moves=10)
 
-        # 駒選択
-        piece_pos = ai.choose_piece(engine)
-        assert piece_pos is not None
+        # 駒選択アクション
+        action = ai.choose_action(engine.state)
+        assert action is not None
+        assert isinstance(action, SelectPieceAction)
 
         # 選択を実行
-        engine.select_piece(piece_pos)
+        engine.apply_action(action)
 
-        # 移動先選択
-        dest_pos = ai.choose_destination(engine)
-        assert dest_pos is not None
+        # 移動先選択アクション
+        action2 = ai.choose_action(engine.state)
+        assert action2 is not None
+        assert isinstance(action2, SelectDestinationAction)
 
         # 実際に合法手かチェック
         legal_moves = engine.get_legal_destinations()
-        assert dest_pos in legal_moves
+        assert action2.pos in legal_moves

@@ -6,6 +6,11 @@ from typing import Optional
 from backend.rules.game_engine import GameEngine, GamePhase
 from backend.domain.game_state import GameState
 from backend.domain.kifu import KifuMode
+from backend.domain.action import (
+    Action, SelectPieceAction, SelectDestinationAction,
+    StopMoveAction, SelectNextStepAction,
+    DecidePromotionAction, ShootAction, SkipShootAction
+)
 from ai.base import BaseAI
 from ai.minimax.evaluator import evaluate
 from ai.greedy.piece_values import get_piece_value, select_best_shoot_target
@@ -33,96 +38,55 @@ class MinimaxPlayer(BaseAI):
         self.max_moves = max_moves
         self.epsilon = epsilon
 
-    def play_step(self, engine: GameEngine) -> bool:
-        """1状態遷移を処理（探索中はストリーミングを停止）
-
-        BaseAIのplay_stepをオーバーライドし、探索前後でモード切り替えを行う。
-        """
-        logger.debug(f"play_step開始: player={engine.current_player}, phase={engine.phase}, kifu_mode={engine._kifu_mode}")
-
-        # ε確率でランダム（親クラスのplay_stepを使用）
+    def choose_action(self, state: GameState) -> Action:
+        """現在の状態から次のアクションを選択"""
+        # ε確率でランダム
         if self.epsilon > 0 and random.random() < self.epsilon:
-            logger.debug("epsilon: ランダム手を使用")
-            return super().play_step(engine)
+            return self._choose_random_action(state)
+
+        # 最善のアクションを探索
+        best_action = self._search_best_action_from_state(state)
+
+        if best_action is None:
+            # フォールバック: ランダム
+            return self._choose_random_action(state)
+
+        return best_action
+
+    def _choose_random_action(self, state: GameState) -> Action:
+        """ランダムにアクションを選択（フォールバック用）"""
+        actions = self._get_actions_from_state(state)
+        if not actions:
+            # どうしようもない場合のデフォルト
+            return SelectPieceAction(pos=(0, 0))
+        return random.choice(actions)
+
+    def play_step(self, engine: GameEngine) -> bool:
+        """1状態遷移を処理（探索中はストリーミングを停止）"""
+        logger.debug(f"play_step開始: player={engine.current_player}, phase={engine.phase}")
+
+        if engine.phase == GamePhase.GAME_OVER:
+            return False
 
         # 探索前にモードを保存してNONEに切り替え
         original_mode = engine._kifu_mode
         engine._kifu_mode = KifuMode.NONE
 
         try:
-            # 最善のアクションを探索
-            best_action = self._search_best_action(engine)
+            action = self.choose_action(engine.state)
         finally:
-            # モードを復元
             engine._kifu_mode = original_mode
 
-        logger.debug(f"探索結果: best_action={best_action}")
+        logger.debug(f"探索結果: action={action}")
 
-        if not best_action:
-            # フォールバック: 親クラスのplay_stepを使用
-            logger.warning("best_actionがNone、フォールバック使用")
-            return super().play_step(engine)
+        result = engine.apply_action(action)
+        return result.success
 
-        # 探索結果のアクションを実行（これはストリーミング有効状態で実行）
-        before_player = engine.current_player
-        before_phase = engine.phase
-        result = self._apply_action(engine, best_action)
-        logger.debug(f"_apply_action: ({before_player},{before_phase}) -> ({engine.current_player},{engine.phase}), result={result}")
-        return result
-
-    def choose_piece(self, engine: GameEngine) -> tuple[int, int]:
-        """フォールバック用: ランダムに駒を選択"""
-        movable = engine.get_movable_pieces()
-        return random.choice(movable) if movable else (0, 0)
-
-    def choose_destination(self, engine: GameEngine) -> tuple[int, int]:
-        """フォールバック用: ランダムに移動先を選択"""
-        dests = engine.get_legal_destinations()
-        return random.choice(dests) if dests else (0, 0)
-
-    def choose_next_step(self, engine: GameEngine) -> tuple[int, int]:
-        """フォールバック用: 敵を取れるステップを優先"""
-        options = engine.get_next_step_options()
-        if not options:
-            return (0, 0)
-
-        best_option = options[0]
-        best_value = -1
-        for pos in options:
-            target = engine.state.board.get(pos[0], pos[1])
-            if target:
-                value = get_piece_value(target[0])
-                if value > best_value:
-                    best_value = value
-                    best_option = pos
-
-        return best_option
-
-    def choose_stop(self, engine: GameEngine) -> bool:
-        """フォールバック用: 取れる駒がなければ停止"""
-        if not engine.can_stop_now():
-            return False
-        options = engine.get_next_step_options()
-        for pos in options:
-            if engine.state.board.get(pos[0], pos[1]):
-                return False
-        return True
-
-    def choose_promotion(self, engine: GameEngine) -> bool:
-        """フォールバック用: 常に成る"""
-        return True
-
-    def choose_shoot_target(self, engine: GameEngine) -> Optional[tuple[int, int]]:
-        """フォールバック用: 最高価値を選択"""
-        targets = engine.get_shoot_targets()
-        return select_best_shoot_target(targets, engine.state.board)
-
-    def _search_best_action(self, engine: GameEngine) -> Optional[dict]:
-        """現在のフェーズで最善のアクションを探索
+    def _search_best_action_from_state(self, state: GameState) -> Optional[Action]:
+        """現在の状態で最善のアクションを探索
 
         GameStateをコピーして探索を行う。元のstateは変更しない。
         """
-        state = engine.state
         actions = self._get_actions_from_state(state)
         if not actions:
             return None
@@ -139,8 +103,8 @@ class MinimaxPlayer(BaseAI):
             search_engine = GameEngine(state=search_state, kifu_mode=KifuMode.NONE)
 
             # アクションを適用
-            apply_result = self._apply_action(search_engine, action)
-            if not apply_result:
+            result = search_engine.apply_action(action)
+            if not result.success:
                 logger.debug(f"  action={action} apply失敗")
                 continue
 
@@ -183,7 +147,8 @@ class MinimaxPlayer(BaseAI):
                 child_state = state.copy()
                 child_engine = GameEngine(state=child_state, kifu_mode=KifuMode.NONE)
 
-                if not self._apply_action(child_engine, action):
+                result = child_engine.apply_action(action)
+                if not result.success:
                     continue
 
                 # プレイヤーが変わったときだけmaximizingを切り替える
@@ -198,7 +163,8 @@ class MinimaxPlayer(BaseAI):
                 child_state = state.copy()
                 child_engine = GameEngine(state=child_state, kifu_mode=KifuMode.NONE)
 
-                if not self._apply_action(child_engine, action):
+                result = child_engine.apply_action(action)
+                if not result.success:
                     continue
 
                 # プレイヤーが変わったときだけmaximizingを切り替える
@@ -209,39 +175,30 @@ class MinimaxPlayer(BaseAI):
 
     def _evaluate_state(self, state: GameState, player: int) -> float:
         """GameStateを評価"""
-        # 一時的にengineを作成して評価
         temp_engine = GameEngine(state=state, kifu_mode=KifuMode.NONE)
         return evaluate(temp_engine, player)
 
-    def _get_actions(self, engine: GameEngine) -> list[dict]:
-        """現在のフェーズで可能なアクションを取得（engine版）"""
-        return self._get_actions_from_state(engine.state)
-
-    def _get_actions_from_state(self, state: GameState) -> list[dict]:
+    def _get_actions_from_state(self, state: GameState) -> list[Action]:
         """GameStateから可能なアクションを取得"""
         phase = state.phase
 
         if phase == GamePhase.PIECE_SELECT:
-            return self._get_piece_select_actions_from_state(state)
+            return self._get_piece_select_actions(state)
         elif phase == GamePhase.DEST_SELECT:
-            return self._get_dest_select_actions_from_state(state)
+            return self._get_dest_select_actions(state)
         elif phase == GamePhase.MULTI_STEP_MOVE:
-            return self._get_multi_step_actions_from_state(state)
+            return self._get_multi_step_actions(state)
         elif phase == GamePhase.PROMOTION:
-            return self._get_promotion_actions_from_state(state)
+            return self._get_promotion_actions(state)
         elif phase == GamePhase.SHOOTING:
-            return self._get_shooting_actions_from_state(state)
+            return self._get_shooting_actions(state)
         else:
             return []
 
-    def _get_piece_select_actions(self, engine: GameEngine) -> list[dict]:
-        """駒選択フェーズのアクション（engine版）"""
-        return self._get_piece_select_actions_from_state(engine.state)
-
-    def _get_piece_select_actions_from_state(self, state: GameState) -> list[dict]:
+    def _get_piece_select_actions(self, state: GameState) -> list[Action]:
         """駒選択フェーズのアクション"""
         from backend.rules import movement
-        actions = []
+        actions: list[Action] = []
         player = state.current_player
         for x in range(19):
             for y in range(19):
@@ -249,30 +206,22 @@ class MinimaxPlayer(BaseAI):
                 if piece_data and piece_data[1] == player:
                     moves = movement.get_legal_moves(state, (x, y))
                     if moves:
-                        actions.append({"type": "select_piece", "pos": (x, y)})
+                        actions.append(SelectPieceAction(pos=(x, y)))
         return actions
 
-    def _get_dest_select_actions(self, engine: GameEngine) -> list[dict]:
-        """移動先選択フェーズのアクション（engine版）"""
-        return self._get_dest_select_actions_from_state(engine.state)
-
-    def _get_dest_select_actions_from_state(self, state: GameState) -> list[dict]:
+    def _get_dest_select_actions(self, state: GameState) -> list[Action]:
         """移動先選択フェーズのアクション"""
         from backend.rules import movement
-        actions = []
+        actions: list[Action] = []
         if state.selected_piece:
             for pos in movement.get_legal_moves(state, state.selected_piece):
-                actions.append({"type": "select_destination", "pos": pos})
+                actions.append(SelectDestinationAction(pos=pos))
         return actions
 
-    def _get_multi_step_actions(self, engine: GameEngine) -> list[dict]:
-        """マルチステップフェーズのアクション（engine版）"""
-        return self._get_multi_step_actions_from_state(engine.state)
-
-    def _get_multi_step_actions_from_state(self, state: GameState) -> list[dict]:
+    def _get_multi_step_actions(self, state: GameState) -> list[Action]:
         """マルチステップフェーズのアクション"""
         from backend.domain.piece_registry import get_piece
-        actions = []
+        actions: list[Action] = []
 
         if state.multi_step_state is None:
             return actions
@@ -281,7 +230,7 @@ class MinimaxPlayer(BaseAI):
 
         # 停止可能なら停止アクションを追加
         if ms_state.get("can_stop_early", False):
-            actions.append({"type": "stop_move"})
+            actions.append(StopMoveAction())
 
         # 次のステップの選択肢
         piece = get_piece(ms_state["piece_id"])
@@ -294,69 +243,28 @@ class MinimaxPlayer(BaseAI):
             ms_state.get("first_direction")
         )
         for pos in next_options:
-            actions.append({"type": "select_next_step", "pos": pos})
+            actions.append(SelectNextStepAction(pos=pos))
 
         return actions
 
-    def _get_promotion_actions(self, engine: GameEngine) -> list[dict]:
-        """成り判断フェーズのアクション（engine版）"""
-        return self._get_promotion_actions_from_state(engine.state)
-
-    def _get_promotion_actions_from_state(self, state: GameState) -> list[dict]:
+    def _get_promotion_actions(self, state: GameState) -> list[Action]:
         """成り判断フェーズのアクション"""
         return [
-            {"type": "decide_promotion", "promote": True},
-            {"type": "decide_promotion", "promote": False},
+            DecidePromotionAction(promote=True),
+            DecidePromotionAction(promote=False),
         ]
 
-    def _get_shooting_actions(self, engine: GameEngine) -> list[dict]:
-        """射撃フェーズのアクション（engine版）"""
-        return self._get_shooting_actions_from_state(engine.state)
-
-    def _get_shooting_actions_from_state(self, state: GameState) -> list[dict]:
+    def _get_shooting_actions(self, state: GameState) -> list[Action]:
         """射撃フェーズのアクション"""
-        actions = []
+        actions: list[Action] = []
 
         # スキップ
-        actions.append({"type": "skip_shoot"})
+        actions.append(SkipShootAction())
 
         # 各ターゲットへの射撃
         if state.pending_shoot:
             for target in state.pending_shoot.get("targets", []):
-                actions.append({"type": "shoot", "target": target})
+                actions.append(ShootAction(target=target))
 
         return actions
-
-    def _apply_action(self, engine: GameEngine, action: dict) -> bool:
-        """アクションを適用"""
-        action_type = action.get("type")
-
-        if action_type == "select_piece":
-            return engine.select_piece(action["pos"])
-
-        elif action_type == "select_destination":
-            result = engine.select_destination(action["pos"])
-            return result.success
-
-        elif action_type == "select_next_step":
-            result = engine.select_next_step(action["pos"])
-            return result.success
-
-        elif action_type == "stop_move":
-            result = engine.stop_move()
-            return result.success
-
-        elif action_type == "decide_promotion":
-            result = engine.decide_promotion(action["promote"])
-            return result.success
-
-        elif action_type == "shoot":
-            result = engine.shoot(action["target"])
-            return result.success
-
-        elif action_type == "skip_shoot":
-            result = engine.skip_shoot()
-            return result.success
-
-        return False
 

@@ -63,12 +63,6 @@ class PieceModule:
             return None
         return self._module.get_capture_filter()
 
-    def get_shot_immunity(self) -> Optional[dict]:
-        """射撃無効情報"""
-        if not hasattr(self._module, "get_shot_immunity"):
-            return None
-        return self._module.get_shot_immunity()
-
     def get_capture_immunity(self) -> list[int]:
         """この駒を取れない駒のリスト"""
         if not hasattr(self._module, "get_capture_immunity"):

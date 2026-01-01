@@ -23,9 +23,3 @@ def after_move(game_state, from_pos, to_pos, player):
     if targets:
         return {"area_kill": targets}
     return None
-
-
-def on_enemy_gunshi_promote(game_state, player):
-    """敵の記室が軍師に成ると、この駒は死ぬ"""
-    # ゲームロジック側で処理
-    pass

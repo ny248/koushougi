@@ -171,6 +171,5 @@ def check_triggered_promotions(state: GameState, promoted_piece_id: int,
                 piece_data = state.board.get(x, y)
                 if piece_data and piece_data[0] == DOKUKA_ID and piece_data[1] == enemy:
                     state.board.remove(x, y)
-                    state.captured.add(player, DOKUKA_ID)
 
     return result
