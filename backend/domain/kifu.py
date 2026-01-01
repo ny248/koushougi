@@ -7,11 +7,19 @@ import json
 
 @dataclass
 class Move:
-    """1手の記録（Undoに必要な全情報を含む）"""
+    """1手の記録（Undoに必要な全情報を含む）
+
+    move_type:
+        - "move": 通常の駒移動（マルチステップの最初の1歩を含む）
+        - "step": マルチステップ移動の2歩目以降
+        - "stop": マルチステップ移動の早期停止
+        - "shoot": 射撃
+        - "skip_shoot": 射撃スキップ
+    """
 
     # 基本情報
     player: int                          # 手番 (0=先手, 1=後手)
-    move_type: str                       # "move" or "shoot"
+    move_type: str                       # "move", "step", "stop", "shoot", "skip_shoot"
 
     # 移動の場合
     from_pos: Optional[tuple[int, int]] = None  # 移動元
@@ -40,9 +48,15 @@ class Move:
     demotions: list[tuple[tuple[int, int], int, int]] = field(default_factory=list)
     # [(位置, 元駒ID, 新駒ID), ...]
 
+    # マルチステップ用（stopのundo用）
+    multi_step_state: Optional[dict] = None  # 停止前のマルチステップ状態
+
+    # 射撃用（skip_shootのundo用）
+    shoot_state: Optional[dict] = None  # スキップ前の射撃状態
+
     def to_dict(self) -> dict:
         """辞書に変換（JSON保存用）"""
-        return {
+        result = {
             "player": self.player,
             "move_type": self.move_type,
             "from": list(self.from_pos) if self.from_pos else None,
@@ -57,6 +71,12 @@ class Move:
             "chain_promotions": [[list(pos), old, new] for pos, old, new in self.chain_promotions],
             "demotions": [[list(pos), old, new] for pos, old, new in self.demotions],
         }
+        # オプショナルフィールド（存在する場合のみ出力）
+        if self.multi_step_state:
+            result["multi_step_state"] = self.multi_step_state
+        if self.shoot_state:
+            result["shoot_state"] = self.shoot_state
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "Move":
@@ -75,6 +95,8 @@ class Move:
             collateral_kills=[(tuple(item[0]), item[1], item[2]) for item in data.get("collateral_kills", [])],
             chain_promotions=[(tuple(pos), old, new) for pos, old, new in data.get("chain_promotions", [])],
             demotions=[(tuple(pos), old, new) for pos, old, new in data.get("demotions", [])],
+            multi_step_state=data.get("multi_step_state"),
+            shoot_state=data.get("shoot_state"),
         )
 
 

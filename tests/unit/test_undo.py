@@ -56,7 +56,11 @@ class TestUndo:
         assert engine.state.board.get(9, 11) is None
 
     def test_multiple_undo(self):
-        """複数回のundoが正常に動作する"""
+        """複数回のundoが正常に動作する
+
+        1状態遷移=1棋譜エントリの設計により、1ターン分を戻すには
+        「move」と「select」の2回のundoが必要
+        """
         engine = GameEngine()
 
         # 3手指す
@@ -79,9 +83,15 @@ class TestUndo:
                             found = True
                             break
 
-        # 3回undoして戻る
+        # 各ターンを完全にundoするには2回のundo（move + select）が必要
         for i in range(2, -1, -1):
+            # moveをundo → DEST_SELECTに戻る
             assert engine.undo() is True
+            assert engine.phase == GamePhase.DEST_SELECT
+
+            # selectをundo → PIECE_SELECTに戻り、手番も戻る
+            assert engine.undo() is True
+            assert engine.phase == GamePhase.PIECE_SELECT
             assert engine.current_player == moves_played[i][2]
 
     def test_undo_empty_kifu(self):

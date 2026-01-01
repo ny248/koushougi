@@ -123,6 +123,15 @@ class GameEngine:
         if not moves:
             return False
 
+        # 棋譜に記録
+        select_move = Move(
+            player=player,
+            move_type="select",
+            from_pos=pos,
+            piece_id=piece_id,
+        )
+        self.state.kifu.append(select_move)
+
         self._selected_piece = pos
         self._phase = GamePhase.DEST_SELECT
         return True
@@ -302,6 +311,8 @@ class GameEngine:
                 self.state, from_pos, to_pos, captured_piece, player
             )
             if can_promote:
+                # PROMOTIONフェーズに入る前に棋譜を記録（1状態遷移=1棋譜エントリ）
+                self.state.kifu.append(self._kifu_move)
                 self._phase = GamePhase.PROMOTION
                 return result
 
@@ -427,7 +438,7 @@ class GameEngine:
         if not self._multi_step_state["can_stop_early"]:
             return MoveResult(success=False, error="この駒は途中で止まれません")
 
-        # 停止を棋譜に記録
+        # 停止を棋譜に記録（undo用にマルチステップ状態を保存）
         state = self._multi_step_state
         kifu_move = Move(
             player=self.current_player,
@@ -435,6 +446,7 @@ class GameEngine:
             from_pos=state["current_pos"],
             to_pos=state["current_pos"],
             piece_id=state["piece_id"],
+            multi_step_state=state.copy(),  # undo用に状態を保存
         )
         self.state.kifu.append(kifu_move)
 
@@ -542,23 +554,37 @@ class GameEngine:
         if self._phase != GamePhase.PROMOTION:
             return MoveResult(success=False, error="成り判断フェーズではありません")
 
-        result = self._pending_move_result
+        if self._kifu_move is None:
+            return MoveResult(success=False, error="移動情報がありません")
+
+        result = self._pending_move_result or MoveResult(success=True)
         to_pos = self._kifu_move.to_pos
         player = self._kifu_move.player
+
+        # 成り判断を棋譜に記録（1状態遷移=1棋譜エントリ）
+        promo_move = Move(
+            player=player,
+            move_type="promote",
+            from_pos=to_pos,
+            piece_id=self._kifu_move.piece_id,
+            promoted=promote,
+        )
 
         if promote:
             new_id = promotion.execute_promotion(self.state, to_pos)
             if new_id:
                 result.promoted = True
                 result.promoted_to = new_id
-                self._kifu_move.promoted = True
 
                 # 連鎖成り
                 triggered = promotion.check_triggered_promotions(
                     self.state, new_id, player
                 )
                 result.triggered_promotions = triggered
-                self._kifu_move.chain_promotions = triggered
+                promo_move.chain_promotions = triggered
+
+        self.state.kifu.append(promo_move)
+        self._kifu_move = None  # 移動の棋譜はすでに記録済み
 
         return self._after_promotion_check(result, to_pos)
 
@@ -572,6 +598,11 @@ class GameEngine:
         if result.after_effect:
             effect = result.after_effect
             if "shoot" in effect:
+                # SHOOTINGフェーズに入る前に棋譜を記録（1状態遷移=1棋譜エントリ）
+                if self._kifu_move:
+                    self.state.kifu.append(self._kifu_move)
+                    self._kifu_move = None
+
                 # 射撃待ち状態
                 shoot_count = effect["shoot"]["count"]
                 self._pending_shoot = {
@@ -587,11 +618,13 @@ class GameEngine:
 
             if "area_kill" in effect:
                 # 周囲破壊は自動実行
+                player = self._kifu_move.player if self._kifu_move else self.current_player
                 killed = movement.execute_area_kill(
-                    self.state, effect["area_kill"], self._kifu_move.player
+                    self.state, effect["area_kill"], player
                 )
                 result.path_kills.extend(killed)
-                self._kifu_move.collateral_kills = killed
+                if self._kifu_move:
+                    self._kifu_move.collateral_kills = killed
 
         # ターン終了処理
         return self._finalize_turn(result)
@@ -682,6 +715,16 @@ class GameEngine:
         if self._phase != GamePhase.SHOOTING:
             return MoveResult(success=False, error="射撃フェーズではありません")
 
+        # 射撃スキップを棋譜に記録（undo用に射撃状態を保存）
+        if self._pending_shoot:
+            kifu_move = Move(
+                player=self.current_player,
+                move_type="skip_shoot",
+                from_pos=self._pending_shoot["pos"],
+                shoot_state=self._pending_shoot.copy(),  # undo用に状態を保存
+            )
+            self.state.kifu.append(kifu_move)
+
         self._pending_shoot = None
         result = MoveResult(success=True)
         return self._finalize_turn(result)
@@ -723,79 +766,229 @@ class GameEngine:
     # ===================
 
     def undo(self) -> bool:
-        """棋譜ベースのUndo"""
+        """棋譜ベースのUndo
+
+        各move_typeに対応:
+        - "move": 通常移動（マルチステップの1歩目を含む）を戻す
+        - "step": マルチステップの2歩目以降を戻す
+        - "stop": マルチステップの早期停止を取り消し、MULTI_STEP_MOVEに戻る
+        - "shoot": 射撃を戻す
+        - "skip_shoot": 射撃スキップを取り消し、SHOOTINGに戻る
+        """
         last_move = self.state.kifu.pop()
         if last_move is None:
             return False
 
+        # 共通の副作用を元に戻す
+        self._undo_side_effects(last_move)
+
+        if last_move.move_type == "select":
+            self._undo_select(last_move)
+
+        elif last_move.move_type == "move":
+            self._undo_move(last_move)
+
+        elif last_move.move_type == "step":
+            self._undo_step(last_move)
+
+        elif last_move.move_type == "stop":
+            self._undo_stop(last_move)
+
+        elif last_move.move_type == "promote":
+            self._undo_promote(last_move)
+
+        elif last_move.move_type == "shoot":
+            self._undo_shoot(last_move)
+
+        elif last_move.move_type == "skip_shoot":
+            self._undo_skip_shoot(last_move)
+
+        return True
+
+    def _undo_select(self, last_move: Move) -> None:
+        """駒選択のundo → PIECE_SELECTに戻る"""
+        self._selected_piece = None
+        self._phase = GamePhase.PIECE_SELECT
+        # 手番は戻さない（ターン終了していないため）
+
+    def _undo_promote(self, last_move: Move) -> None:
+        """成り判断のundo → PROMOTIONに戻る"""
+        pos = last_move.from_pos  # 成り判断時のfrom_posは駒の位置
+        piece_id = last_move.piece_id
+
+        # 成った場合は元に戻す
+        if last_move.promoted:
+            piece_data = self.state.board.get(pos[0], pos[1])
+            if piece_data:
+                # 成り前の駒IDに戻す
+                self.state.board.set(pos[0], pos[1], piece_id, piece_data[1], is_promoted=False)
+
+        # 棋譜のmoveエントリを復元して_kifu_moveにセット
+        # （直前のエントリは移動のはず）
+        if len(self.state.kifu) > 0:
+            self._kifu_move = self.state.kifu.moves[-1]
+
+        self._phase = GamePhase.PROMOTION
+        # 手番は戻さない（ターン終了していないため）
+
+    def _undo_side_effects(self, last_move: Move) -> None:
+        """共通の副作用を元に戻す"""
         # 成り戻しを元に戻す
         for pos, old_id, new_id in reversed(last_move.demotions):
-            self.state.board.set(pos[0], pos[1], old_id, self.state.board.get(pos[0], pos[1])[1])
+            piece_data = self.state.board.get(pos[0], pos[1])
+            if piece_data:
+                self.state.board.set(pos[0], pos[1], old_id, piece_data[1])
 
         # 連鎖成りを元に戻す
         for pos, old_id, new_id in reversed(last_move.chain_promotions):
-            player = self.state.board.get(pos[0], pos[1])[1]
-            self.state.board.set(pos[0], pos[1], old_id, player)
+            piece_data = self.state.board.get(pos[0], pos[1])
+            if piece_data:
+                self.state.board.set(pos[0], pos[1], old_id, piece_data[1])
 
         # 道連れを元に戻す
         for pos, piece_id, killed_is_promoted in last_move.collateral_kills:
             self.state.board.set(pos[0], pos[1], piece_id, 1 - last_move.player, is_promoted=killed_is_promoted)
 
-        if last_move.move_type == "move":
-            from_pos = last_move.from_pos
-            to_pos = last_move.to_pos
-            piece_id = last_move.piece_id
+    def _undo_move(self, last_move: Move) -> None:
+        """通常移動のundo"""
+        from_pos = last_move.from_pos
+        to_pos = last_move.to_pos
+        piece_id = last_move.piece_id
 
-            # 成りを元に戻す
+        # 成りを元に戻す
+        was_promoted_before = False
+        if last_move.promoted:
+            original_id = piece_id
+            for pid in range(1, 60):
+                try:
+                    p = get_piece(pid)
+                    if p.promotes_to == piece_id:
+                        original_id = pid
+                        break
+                except:
+                    pass
+            piece_id = original_id
             was_promoted_before = False
-            if last_move.promoted:
-                piece = get_piece(piece_id)
-                original_id = piece_id
-                for pid in range(1, 60):
-                    try:
-                        p = get_piece(pid)
-                        if p.promotes_to == piece_id:
-                            original_id = pid
-                            break
-                    except:
-                        pass
-                piece_id = original_id
-                was_promoted_before = False
-            else:
-                was_promoted_before = self.state.board.get_promoted(to_pos[0], to_pos[1])
+        else:
+            was_promoted_before = self.state.board.get_promoted(to_pos[0], to_pos[1])
 
-            # 駒を元の位置に戻す
-            self.state.board.remove(to_pos[0], to_pos[1])
-            self.state.board.set(from_pos[0], from_pos[1], piece_id, last_move.player, is_promoted=was_promoted_before)
+        # 駒を元の位置に戻す
+        self.state.board.remove(to_pos[0], to_pos[1])
+        self.state.board.set(from_pos[0], from_pos[1], piece_id, last_move.player, is_promoted=was_promoted_before)
 
-            # 取った駒を復元
-            if last_move.captured_piece is not None:
-                self.state.board.set(
-                    to_pos[0], to_pos[1], last_move.captured_piece, 1 - last_move.player,
-                    is_promoted=last_move.captured_was_promoted
-                )
+        # 取った駒を復元
+        if last_move.captured_piece is not None:
+            self.state.board.set(
+                to_pos[0], to_pos[1], last_move.captured_piece, 1 - last_move.player,
+                is_promoted=last_move.captured_was_promoted
+            )
 
-            # 経路上で取った駒を復元
-            for pos, killed_id, killed_is_promoted in last_move.path_kills:
-                self.state.board.set(pos[0], pos[1], killed_id, 1 - last_move.player, is_promoted=killed_is_promoted)
-
-        elif last_move.move_type == "shoot":
-            if last_move.captured_piece is not None and last_move.captured_pos is not None:
-                self.state.board.set(
-                    last_move.captured_pos[0], last_move.captured_pos[1],
-                    last_move.captured_piece, 1 - last_move.player,
-                    is_promoted=last_move.captured_was_promoted
-                )
-            for pos, killed_id, killed_is_promoted in last_move.path_kills:
-                self.state.board.set(pos[0], pos[1], killed_id, 1 - last_move.player, is_promoted=killed_is_promoted)
+        # 経路上で取った駒を復元
+        for pos, killed_id, killed_is_promoted in last_move.path_kills:
+            self.state.board.set(pos[0], pos[1], killed_id, 1 - last_move.player, is_promoted=killed_is_promoted)
 
         # 手番を戻す
         self.state.current_player = last_move.player
         self.state.move_count -= 1
         self.state.winner = None
-        self._phase = GamePhase.PIECE_SELECT
 
-        return True
+        # DEST_SELECTに戻る（selectエントリはまだ棋譜に残っている）
+        self._selected_piece = from_pos
+        self._phase = GamePhase.DEST_SELECT
+
+    def _undo_step(self, last_move: Move) -> None:
+        """マルチステップの1ステップをundo"""
+        from_pos = last_move.from_pos
+        to_pos = last_move.to_pos
+        piece_id = last_move.piece_id
+        player = last_move.player
+
+        # 駒を元の位置に戻す
+        already_promoted = self.state.board.get_promoted(to_pos[0], to_pos[1])
+        self.state.board.remove(to_pos[0], to_pos[1])
+        self.state.board.set(from_pos[0], from_pos[1], piece_id, player, is_promoted=already_promoted)
+
+        # 取った駒を復元
+        if last_move.captured_piece is not None:
+            self.state.board.set(
+                to_pos[0], to_pos[1], last_move.captured_piece, 1 - player,
+                is_promoted=last_move.captured_was_promoted
+            )
+
+        # 1歩目かどうかを判定（直前の棋譜エントリがselectなら1歩目）
+        is_first_step = (len(self.state.kifu) > 0 and
+                         self.state.kifu.moves[-1].move_type == "select")
+
+        if is_first_step:
+            # 1歩目のundo → DEST_SELECTに戻る
+            self._multi_step_state = None
+            self._selected_piece = from_pos
+            self._phase = GamePhase.DEST_SELECT
+        else:
+            # 2歩目以降のundo → MULTI_STEP_MOVEのまま
+            if self._multi_step_state:
+                state = self._multi_step_state
+                state["current_pos"] = from_pos
+                state["remaining_steps"] += 1
+                if state["step_history"] and state["step_history"][-1] == to_pos:
+                    state["step_history"].pop()
+                if last_move.captured_piece is not None and state["path_kills"]:
+                    state["path_kills"].pop()
+            self._phase = GamePhase.MULTI_STEP_MOVE
+
+    def _undo_stop(self, last_move: Move) -> None:
+        """マルチステップ停止のundo → MULTI_STEP_MOVEに戻る"""
+        # 保存されたマルチステップ状態を復元
+        if last_move.multi_step_state:
+            self._multi_step_state = last_move.multi_step_state.copy()
+        else:
+            # 状態が保存されていない場合、最低限の状態を再構築
+            self._multi_step_state = {
+                "current_pos": last_move.from_pos,
+                "piece_id": last_move.piece_id,
+                "remaining_steps": 1,  # 少なくとも1歩残っていたはず
+                "can_stop_early": True,
+            }
+
+        # 手番を戻す（stopはターン終了を伴う）
+        self.state.current_player = last_move.player
+        self.state.move_count -= 1
+        self.state.winner = None
+
+        self._phase = GamePhase.MULTI_STEP_MOVE
+
+    def _undo_shoot(self, last_move: Move) -> None:
+        """射撃のundo"""
+        # 取った駒を復元
+        if last_move.captured_piece is not None and last_move.captured_pos is not None:
+            self.state.board.set(
+                last_move.captured_pos[0], last_move.captured_pos[1],
+                last_move.captured_piece, 1 - last_move.player,
+                is_promoted=last_move.captured_was_promoted
+            )
+        # 経路上で取った駒を復元（霹靂など）
+        for pos, killed_id, killed_is_promoted in last_move.path_kills:
+            self.state.board.set(pos[0], pos[1], killed_id, 1 - last_move.player, is_promoted=killed_is_promoted)
+
+        # 射撃状態を復元
+        if last_move.shoot_state:
+            self._pending_shoot = last_move.shoot_state.copy()
+            self._phase = GamePhase.SHOOTING
+        else:
+            # 手番を戻す
+            self.state.current_player = last_move.player
+            self.state.move_count -= 1
+            self.state.winner = None
+            self._phase = GamePhase.PIECE_SELECT
+
+    def _undo_skip_shoot(self, last_move: Move) -> None:
+        """射撃スキップのundo → SHOOTINGに戻る"""
+        # 射撃状態を復元
+        if last_move.shoot_state:
+            self._pending_shoot = last_move.shoot_state.copy()
+
+        self._phase = GamePhase.SHOOTING
+        # 手番は戻さない（ターン終了していないため）
 
     # ===================
     # ユーティリティ
