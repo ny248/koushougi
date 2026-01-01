@@ -31,3 +31,14 @@ class RandomPlayer(BaseAI):
         if random.random() < 0.5:
             return random.choice(targets)
         return None  # スキップ
+
+    def choose_next_step(self, engine: GameEngine) -> tuple[int, int]:
+        """ランダムに次のステップを選択"""
+        options = engine.get_next_step_options()
+        return random.choice(options) if options else (0, 0)
+
+    def choose_stop(self, engine: GameEngine) -> bool:
+        """ランダムに停止するか選択（50%で停止）"""
+        if engine.can_stop_now():
+            return random.random() < 0.5
+        return False

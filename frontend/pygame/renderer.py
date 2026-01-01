@@ -17,6 +17,7 @@ COLOR_PROMOTED_TEXT = (200, 50, 50)  # 成り駒: 朱字
 COLOR_SELECTED = (100, 200, 100, 150)  # 選択中: 緑
 COLOR_MOVE_TARGET = (100, 100, 255, 150)  # 移動先: 青
 COLOR_SHOOT_TARGET = (255, 100, 100, 150)  # 射撃対象: 赤
+COLOR_STEP_PATH = (255, 165, 0)  # ステップ経路: オレンジ
 
 
 class BoardRenderer:
@@ -153,10 +154,22 @@ class BoardRenderer:
     def draw_state(self, surface: pygame.Surface, state: GameState,
                    selected: Optional[tuple[int, int]] = None,
                    move_targets: Optional[list[tuple[int, int]]] = None,
-                   shoot_targets: Optional[list[tuple[int, int]]] = None):
+                   shoot_targets: Optional[list[tuple[int, int]]] = None,
+                   step_history: Optional[list[tuple[int, int]]] = None):
         """ゲーム状態を描画"""
         # 盤面
         self.draw_board(surface)
+
+        # ステップ経路の線を描画（マルチステップ移動中）
+        if step_history and len(step_history) >= 2:
+            for i in range(len(step_history) - 1):
+                start = self.board_to_pixel(step_history[i][0], step_history[i][1])
+                end = self.board_to_pixel(step_history[i + 1][0], step_history[i + 1][1])
+                pygame.draw.line(surface, COLOR_STEP_PATH, start, end, 3)
+            # 経路上のポイントを小さな丸で表示
+            for pos in step_history[:-1]:  # 最後以外
+                px, py = self.board_to_pixel(pos[0], pos[1])
+                pygame.draw.circle(surface, COLOR_STEP_PATH, (px, py), 5)
 
         # 移動先マーカー（駒の下に描画）
         if move_targets:

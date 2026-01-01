@@ -58,6 +58,32 @@ class BaseAI(ABC):
         """
         pass
 
+    @abstractmethod
+    def choose_next_step(self, engine: GameEngine) -> tuple[int, int]:
+        """マルチステップ移動の次のステップを選択
+
+        Args:
+            engine: ゲームエンジン（MULTI_STEP_MOVEフェーズ）
+                   engine.get_next_step_options() で次のステップ候補を取得可能
+
+        Returns:
+            次の移動先の位置 (x, y)
+        """
+        pass
+
+    @abstractmethod
+    def choose_stop(self, engine: GameEngine) -> bool:
+        """マルチステップ移動を途中で止めるかどうかを選択
+
+        Args:
+            engine: ゲームエンジン（MULTI_STEP_MOVEフェーズ）
+                   engine.can_stop_now() で停止可能か確認可能
+
+        Returns:
+            停止する場合True、続ける場合False
+        """
+        pass
+
     def play_turn(self, engine: GameEngine) -> bool:
         """1ターンをプレイ（フェーズに応じて自動で処理）
 
@@ -80,6 +106,24 @@ class BaseAI(ABC):
         result = engine.select_destination(dest_pos)
         if not result.success:
             return False
+
+        # フェーズ2.5: マルチステップ移動（必要な場合）
+        while engine.phase == GamePhase.MULTI_STEP_MOVE:
+            # 停止可能なら停止判断
+            if engine.can_stop_now():
+                if self.choose_stop(engine):
+                    result = engine.stop_move()
+                    if not result.success:
+                        return False
+                    break
+
+            # 次のステップを選択
+            next_pos = self.choose_next_step(engine)
+            result = engine.select_next_step(next_pos)
+            if not result.success:
+                return False
+
+            # ステップ完了でループ継続（まだMULTI_STEP_MOVEならループ続行）
 
         # フェーズ3: 成り判断（必要な場合）
         if engine.phase == GamePhase.PROMOTION:

@@ -64,7 +64,7 @@ def train_supervised(args, logger):
 
     # フェーズ別のデータ
     phase_data = {}
-    for phase in ["piece", "dest", "promo", "shoot"]:
+    for phase in ["piece", "dest", "promo", "shoot", "step"]:
         key = f"{phase}_states"
         if key in data:
             phase_data[phase] = {
@@ -85,7 +85,7 @@ def train_supervised(args, logger):
         total_loss = 0
         n_batches = 0
 
-        for phase in ["piece", "dest", "promo", "shoot"]:
+        for phase in ["piece", "dest", "promo", "shoot", "step"]:
             if phase_data[phase] is None:
                 continue
 
@@ -186,7 +186,7 @@ def train_reinforce(args, logger):
     phase_data = {}
     all_rewards = []
 
-    for phase in ["piece", "dest", "promo", "shoot"]:
+    for phase in ["piece", "dest", "promo", "shoot", "step"]:
         key = f"{phase}_states"
         if key in data:
             phase_data[phase] = {
@@ -215,7 +215,7 @@ def train_reinforce(args, logger):
         total_loss = 0
         n_updates = 0
 
-        for phase in ["piece", "dest", "promo", "shoot"]:
+        for phase in ["piece", "dest", "promo", "shoot", "step"]:
             if phase_data[phase] is None:
                 continue
 

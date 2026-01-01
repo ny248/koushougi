@@ -181,6 +181,12 @@ class GameApp:
             elif event.key == pygame.K_s and self.engine.phase == GamePhase.SHOOTING and self.is_human_turn():
                 # 射撃スキップ
                 self.skip_shoot()
+            elif event.key == pygame.K_SPACE and self.engine.phase == GamePhase.MULTI_STEP_MOVE and self.is_human_turn():
+                # マルチステップ移動を停止
+                self.stop_multi_step()
+            elif event.key == pygame.K_ESCAPE and self.engine.phase == GamePhase.MULTI_STEP_MOVE and self.is_human_turn():
+                # マルチステップ移動をキャンセル
+                self.cancel_multi_step()
 
     def handle_click(self, pixel_pos: tuple[int, int]):
         """クリック処理"""
@@ -213,6 +219,11 @@ class GameApp:
         # 射撃待ち状態
         if phase == GamePhase.SHOOTING:
             self.handle_shoot_click(board_pos)
+            return
+
+        # マルチステップ移動中
+        if phase == GamePhase.MULTI_STEP_MOVE:
+            self.handle_multi_step_click(board_pos)
             return
 
         # 駒選択 or 移動先選択
@@ -267,6 +278,19 @@ class GameApp:
                 status_parts.append(f"{name}を取った")
             except:
                 pass
+
+        # マルチステップ移動中
+        if self.engine.phase == GamePhase.MULTI_STEP_MOVE:
+            remaining = self.engine.get_remaining_steps()
+            can_stop = self.engine.can_stop_now()
+            stop_msg = "Space:停止, " if can_stop else ""
+            self.status_text = f"次のステップを選択（残り{remaining}歩, {stop_msg}ESC:キャンセル）"
+            # 次ステップ候補をlegal_movesにセット
+            self.legal_moves = self.engine.get_next_step_options()
+            state = self.engine.get_multi_step_state()
+            if state:
+                self.selected_pos = state["current_pos"]
+            return
 
         # 成り判断待ち
         if self.engine.phase == GamePhase.PROMOTION:
@@ -347,6 +371,40 @@ class GameApp:
         self.engine.skip_shoot()
         self.status_text = "射撃をスキップ"
 
+    def handle_multi_step_click(self, pos: tuple[int, int]):
+        """マルチステップ移動中のクリック処理"""
+        options = self.engine.get_next_step_options()
+        if pos in options:
+            result = self.engine.select_next_step(pos)
+            if result.success:
+                self.handle_move_result(result)
+            else:
+                self.status_text = result.error or "移動できません"
+        else:
+            self.status_text = "その位置には移動できません"
+
+    def stop_multi_step(self):
+        """マルチステップ移動を停止"""
+        if not self.engine.can_stop_now():
+            self.status_text = "ここでは停止できません"
+            return
+
+        result = self.engine.stop_move()
+        if result.success:
+            self.clear_selection()
+            self.handle_move_result(result)
+        else:
+            self.status_text = result.error or "停止できません"
+
+    def cancel_multi_step(self):
+        """マルチステップ移動をキャンセル"""
+        result = self.engine.cancel_multi_step()
+        if result.success:
+            self.clear_selection()
+            self.status_text = "移動をキャンセル"
+        else:
+            self.status_text = result.error or "キャンセルできません"
+
     def clear_selection(self):
         """選択解除"""
         self.selected_pos = None
@@ -360,13 +418,21 @@ class GameApp:
             phase = self.engine.phase
             shoot_targets = self.engine.get_shoot_targets() if phase == GamePhase.SHOOTING else []
 
+            # マルチステップ移動中の経路表示用
+            step_history = None
+            if phase == GamePhase.MULTI_STEP_MOVE:
+                state = self.engine.get_multi_step_state()
+                if state:
+                    step_history = state.get("step_history", [])
+
             # 盤面描画
             self.board_renderer.draw_state(
                 self.board_surface,
                 self.engine.state,
                 selected=self.selected_pos,
-                move_targets=self.legal_moves if phase == GamePhase.DEST_SELECT else None,
+                move_targets=self.legal_moves if phase in (GamePhase.DEST_SELECT, GamePhase.MULTI_STEP_MOVE) else None,
                 shoot_targets=shoot_targets,
+                step_history=step_history,
             )
             self.screen.blit(self.board_surface, (0, 0))
 

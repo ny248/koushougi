@@ -5,6 +5,7 @@
 - 移動先選択: 361次元（どこへ動かすか）
 - 成り判断: 2次元（成る/成らない）
 - 射撃選択: 362次元（射撃先 or スキップ）
+- ステップ選択: 362次元（次のステップ位置 or 停止）
 - 価値: 1次元（局面評価 -1〜1）
 """
 
@@ -89,8 +90,9 @@ class KoushougiNet(nn.Module):
         # - 各プレイヤーの駒配置 (2 * NUM_PIECE_TYPES)
         # - 手番 (1)
         # - コンテキスト: 選択済み駒位置 (1)
-        # = 118
-        self.input_channels = 2 * NUM_PIECE_TYPES + 2
+        # - マルチステップ: 現在位置 (1), 残りステップ数/5 (1)
+        # = 120
+        self.input_channels = 2 * NUM_PIECE_TYPES + 4
 
         # 入力層
         self.input_conv = nn.Conv2d(self.input_channels, channels, kernel_size=3, padding=1)
@@ -106,6 +108,7 @@ class KoushougiNet(nn.Module):
         self.dest_head = PolicyHead(channels, NUM_SQUARES)       # 移動先: 361
         self.promo_head = PolicyHead(channels, 2)                # 成り: 2
         self.shoot_head = PolicyHead(channels, NUM_SQUARES + 1)  # 射撃: 362 (361 + skip)
+        self.step_head = PolicyHead(channels, NUM_SQUARES + 1)   # ステップ: 362 (361 + stop)
 
         # 価値ヘッド（共有）
         self.value_head = ValueHead(channels)
@@ -113,8 +116,8 @@ class KoushougiNet(nn.Module):
     def forward(self, x, phase="piece"):
         """
         Args:
-            x: [batch, 118, 19, 19] 盤面テンソル + コンテキスト
-            phase: "piece", "dest", "promo", "shoot"
+            x: [batch, 120, 19, 19] 盤面テンソル + コンテキスト
+            phase: "piece", "dest", "promo", "shoot", "step"
 
         Returns:
             policy: フェーズに応じた出力
@@ -137,6 +140,8 @@ class KoushougiNet(nn.Module):
             policy = self.promo_head(x)
         elif phase == "shoot":
             policy = self.shoot_head(x)
+        elif phase == "step":
+            policy = self.step_head(x)
         else:
             raise ValueError(f"Unknown phase: {phase}")
 
@@ -149,7 +154,7 @@ class KoushougiNetLite(nn.Module):
     def __init__(self, channels=32, num_res_blocks=2):
         super().__init__()
 
-        self.input_channels = 2 * NUM_PIECE_TYPES + 2
+        self.input_channels = 2 * NUM_PIECE_TYPES + 4
 
         # 入力層
         self.input_conv = nn.Conv2d(self.input_channels, channels, kernel_size=3, padding=1)
@@ -165,6 +170,7 @@ class KoushougiNetLite(nn.Module):
         self.dest_head = PolicyHead(channels, NUM_SQUARES)
         self.promo_head = PolicyHead(channels, 2)
         self.shoot_head = PolicyHead(channels, NUM_SQUARES + 1)
+        self.step_head = PolicyHead(channels, NUM_SQUARES + 1)
 
         # 価値ヘッド
         self.value_head = ValueHead(channels)
@@ -184,6 +190,8 @@ class KoushougiNetLite(nn.Module):
             policy = self.promo_head(x)
         elif phase == "shoot":
             policy = self.shoot_head(x)
+        elif phase == "step":
+            policy = self.step_head(x)
         else:
             raise ValueError(f"Unknown phase: {phase}")
 
@@ -208,17 +216,18 @@ def create_model(lite=True, device="mps"):
     return model
 
 
-def encode_board(engine, selected_piece=None) -> torch.Tensor:
+def encode_board(engine, selected_piece=None, multi_step_state=None) -> torch.Tensor:
     """盤面をテンソルにエンコード
 
     Args:
         engine: GameEngine
         selected_piece: 選択中の駒位置 (x, y) or None
+        multi_step_state: マルチステップ移動の状態辞書 or None
 
     Returns:
-        tensor: [118, 19, 19]
+        tensor: [120, 19, 19]
     """
-    tensor = torch.zeros(2 * NUM_PIECE_TYPES + 2, BOARD_SIZE, BOARD_SIZE)
+    tensor = torch.zeros(2 * NUM_PIECE_TYPES + 4, BOARD_SIZE, BOARD_SIZE)
 
     # 駒配置
     for x in range(BOARD_SIZE):
@@ -236,6 +245,15 @@ def encode_board(engine, selected_piece=None) -> torch.Tensor:
     if selected_piece:
         sx, sy = selected_piece
         tensor[2 * NUM_PIECE_TYPES + 1, sy, sx] = 1.0
+
+    # マルチステップ状態
+    if multi_step_state:
+        # 現在位置
+        cx, cy = multi_step_state["current_pos"]
+        tensor[2 * NUM_PIECE_TYPES + 2, cy, cx] = 1.0
+        # 残りステップ数（0〜5を正規化）
+        remaining = multi_step_state.get("remaining_steps", 0)
+        tensor[2 * NUM_PIECE_TYPES + 3, :, :] = remaining / 5.0
 
     return tensor
 
@@ -257,10 +275,10 @@ if __name__ == "__main__":
 
     # ダミー入力
     batch_size = 4
-    x = torch.randn(batch_size, 118, 19, 19)
+    x = torch.randn(batch_size, 120, 19, 19)
 
     # 各フェーズをテスト
-    for phase in ["piece", "dest", "promo", "shoot"]:
+    for phase in ["piece", "dest", "promo", "shoot", "step"]:
         policy, value = model(x, phase=phase)
         print(f"Phase '{phase}': policy shape = {policy.shape}")
 

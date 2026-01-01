@@ -69,6 +69,40 @@ class MinimaxPlayer(BaseAI):
         targets = engine.get_shoot_targets()
         return select_best_shoot_target(targets, engine.state.board)
 
+    def choose_next_step(self, engine: GameEngine) -> tuple[int, int]:
+        """最も価値の高い駒を取れるステップを選択"""
+        options = engine.get_next_step_options()
+        if not options:
+            return (0, 0)
+
+        # 敵を取れるステップを優先
+        best_option = options[0]
+        best_value = 0
+        for pos in options:
+            target = engine.state.board.get(pos[0], pos[1])
+            if target:
+                target_id, _ = target
+                value = get_piece_value(target_id)
+                if value > best_value:
+                    best_value = value
+                    best_option = pos
+
+        return best_option
+
+    def choose_stop(self, engine: GameEngine) -> bool:
+        """停止するか選択: 残りステップで取れる駒がなければ停止"""
+        if not engine.can_stop_now():
+            return False
+
+        # 次のステップで取れる駒があるか確認
+        options = engine.get_next_step_options()
+        for pos in options:
+            target = engine.state.board.get(pos[0], pos[1])
+            if target:
+                return False  # 取れる駒があるなら続行
+
+        return True  # 取れる駒がないなら停止
+
     def _find_best_move(self, engine: GameEngine) -> Optional[dict]:
         """Minimax探索で最善手を見つける"""
         moves = self._get_all_moves(engine)
@@ -230,6 +264,19 @@ class MinimaxPlayer(BaseAI):
         result = engine.select_destination(to_pos)
         if not result.success:
             return False
+
+        # マルチステップ移動（簡略化: 早期停止可能なら停止、そうでなければ自動進行）
+        while engine.phase == GamePhase.MULTI_STEP_MOVE:
+            if engine.can_stop_now():
+                engine.stop_move()
+                break
+            else:
+                options = engine.get_next_step_options()
+                if options:
+                    # 最初の選択肢を選ぶ（簡略化）
+                    engine.select_next_step(options[0])
+                else:
+                    break
 
         # 成り判断
         if engine.phase == GamePhase.PROMOTION:
