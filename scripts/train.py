@@ -304,6 +304,150 @@ def _train_batch_rl(model, optimizer, states, actions, rewards, phase, baseline)
     return loss.item()
 
 
+def train_td(args, logger):
+    """TD学習（価値関数の改善）
+
+    V(s) <- V(s) + α * (target - V(s))
+    target = reward (終端) or γ * V(s') (非終端)
+    """
+    logger.info("=== TD学習 ===")
+    logger.info(f"データ: {args.data}")
+    logger.info(f"出力: {args.output}")
+
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    device = _get_device(args.device)
+    logger.info(f"デバイス: {device}")
+
+    # モデル
+    model = create_model(lite=args.lite, device=str(device))
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+
+    # 既存モデル読み込み
+    if args.load:
+        checkpoint = torch.load(args.load, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        if "optimizer_state_dict" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        logger.info(f"モデル読み込み: {args.load}")
+
+    logger.info(f"パラメータ数: {sum(p.numel() for p in model.parameters()):,}")
+
+    # 経験データ読み込み
+    data = torch.load(args.data)
+    logger.info("経験データ読み込み完了")
+
+    # フェーズ別のデータ
+    phase_data = {}
+    for phase in ["piece", "dest", "promo", "shoot", "step"]:
+        key = f"{phase}_states"
+        if key in data:
+            phase_data[phase] = {
+                "states": data[f"{phase}_states"],
+                "rewards": data[f"{phase}_rewards"],
+            }
+            logger.info(f"  {phase}: {len(data[key])}")
+        else:
+            phase_data[phase] = None
+
+    gamma = args.gamma
+    logger.info(f"γ (割引率): {gamma}")
+
+    # 学習ループ
+    best_loss = float("inf")
+    history = []
+
+    for epoch in range(args.epochs):
+        start = time.time()
+        total_loss = 0
+        n_batches = 0
+
+        for phase in ["piece", "dest", "promo", "shoot", "step"]:
+            if phase_data[phase] is None:
+                continue
+
+            states = phase_data[phase]["states"]
+            rewards = phase_data[phase]["rewards"]
+            n = len(states)
+
+            if n < args.batch_size + 1:
+                continue
+
+            # シャッフル用インデックス
+            indices = torch.randperm(n - 1)  # 次状態が必要なので-1
+
+            for i in range(0, len(indices) - args.batch_size, args.batch_size):
+                batch_idx = indices[i:i + args.batch_size]
+                batch_states = states[batch_idx].to(device)
+                batch_next_states = states[batch_idx + 1].to(device)
+                batch_rewards = rewards[batch_idx].to(device)
+
+                loss = _train_batch_td(
+                    model, optimizer, batch_states, batch_next_states,
+                    batch_rewards, phase, gamma
+                )
+                total_loss += loss
+                n_batches += 1
+
+        avg_loss = total_loss / max(n_batches, 1)
+        elapsed = time.time() - start
+
+        logger.info(f"Epoch {epoch+1}/{args.epochs}: loss={avg_loss:.4f} ({elapsed:.1f}s)")
+        history.append({"epoch": epoch + 1, "loss": avg_loss})
+
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save({"model_state_dict": model.state_dict()}, output_dir / "best_model.pth")
+            logger.info(f"  -> best model saved")
+
+        # メモリクリア
+        if device.type == "mps":
+            torch.mps.empty_cache()
+            gc.collect()
+
+    # 最終保存
+    torch.save({
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict()
+    }, output_dir / "final_model.pth")
+
+    with open(output_dir / "history.json", "w") as f:
+        json.dump(history, f, indent=2)
+
+    logger.info(f"完了: {output_dir}")
+
+
+def _train_batch_td(model, optimizer, states, next_states, rewards, phase, gamma):
+    """TD(0)学習バッチ
+
+    target = reward + γ * V(s')  (非終端)
+           = reward              (終端: reward != 0)
+    """
+    model.train()
+
+    optimizer.zero_grad()
+
+    # 現在状態の価値予測
+    _, value_pred = model(states, phase=phase)
+
+    # 次状態の価値（勾配なし）
+    with torch.no_grad():
+        _, next_value = model(next_states, phase=phase)
+
+    # TD target: 報酬が0でない場合は終端状態とみなす
+    # 終端状態では次状態の価値は使わない
+    is_terminal = (rewards != 0).float().unsqueeze(1)
+    td_target = rewards.unsqueeze(1) + gamma * next_value * (1 - is_terminal)
+
+    # TD誤差
+    loss = F.mse_loss(value_pred, td_target)
+    loss.backward()
+    optimizer.step()
+
+    return loss.item()
+
+
 def _save_checkpoint(output_dir, epoch, model, optimizer, stats, logger):
     """チェックポイント保存"""
     path = output_dir / f"checkpoint_{epoch}.pth"
@@ -362,6 +506,19 @@ def main():
     rl.add_argument("--lite", action="store_true", help="軽量モデル")
     rl.add_argument("--verbose", "-v", action="store_true")
 
+    # TD学習
+    td = subparsers.add_parser("td", help="TD学習（価値関数改善）")
+    td.add_argument("--data", "-d", type=str, required=True, help="経験データファイル(.pt)")
+    td.add_argument("--output", "-o", type=str, default="models/td", help="出力ディレクトリ")
+    td.add_argument("--epochs", type=int, default=20, help="エポック数")
+    td.add_argument("--batch-size", type=int, default=64, help="バッチサイズ")
+    td.add_argument("--lr", type=float, default=0.0001, help="学習率")
+    td.add_argument("--gamma", type=float, default=0.99, help="割引率")
+    td.add_argument("--load", type=str, help="既存モデル読み込み")
+    td.add_argument("--device", type=str, default="auto", choices=["auto", "mps", "cuda", "cpu"])
+    td.add_argument("--lite", action="store_true", help="軽量モデル")
+    td.add_argument("--verbose", "-v", action="store_true")
+
     args = parser.parse_args()
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
@@ -371,6 +528,8 @@ def main():
         train_supervised(args, logger)
     elif args.mode == "reinforce":
         train_reinforce(args, logger)
+    elif args.mode == "td":
+        train_td(args, logger)
 
 
 if __name__ == "__main__":
