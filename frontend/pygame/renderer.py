@@ -247,6 +247,20 @@ class InfoPanel:
         else:
             self.promotion_button_rects = {}
 
+        # キーバインドヘルプ（下部に表示）
+        help_lines = [
+            "--- キー操作 ---",
+            "U: 待った（1手戻す）",
+            "R: リスタート",
+            "S: 射撃スキップ",
+            "ESC: メニューに戻る",
+        ]
+        help_y = self.height - len(help_lines) * 22 - 10
+        for line in help_lines:
+            text = self.font.render(line, True, (150, 150, 150))
+            surface.blit(text, (10, help_y))
+            help_y += 22
+
     def _draw_button(self, surface: pygame.Surface, x: int, y: int,
                      width: int, height: int, text: str, color: tuple):
         """ボタンを描画"""
