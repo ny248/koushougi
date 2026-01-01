@@ -76,7 +76,7 @@ class MinimaxPlayer(BaseAI):
             return None
 
         player = engine.current_player
-        best_move = None
+        best_moves = []  # 同じ評価値の手をリストに保持
         best_value = float('-inf')
         alpha = float('-inf')
         beta = float('inf')
@@ -97,11 +97,14 @@ class MinimaxPlayer(BaseAI):
 
             if value > best_value:
                 best_value = value
-                best_move = move
+                best_moves = [move]
+            elif value == best_value:
+                best_moves.append(move)
 
             alpha = max(alpha, value)
 
-        return best_move
+        # 同じ評価値の手からランダムに選択
+        return random.choice(best_moves) if best_moves else None
 
     def _minimax(self, engine: GameEngine, depth: int, alpha: float, beta: float,
                  maximizing: bool, original_player: int) -> float:
