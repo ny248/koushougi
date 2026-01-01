@@ -62,7 +62,32 @@ koushougi/
 - **No captured piece reuse** - Unlike Shogi, captured pieces cannot be dropped back
 - **Promotion system** - Pieces promote when entering enemy territory or capturing specific pieces
 - **Win condition** - Capture opponent's 将 (General) + either 中軍/旗 (Central Army/Flag), unless 中軍 promotes to 帥
-- **Phase-separated FSM** - GameEngine uses phases: PIECE_SELECT → DEST_SELECT → PROMOTION → SHOOTING
+
+### Game State Model
+
+ゲーム状態は3要素の組で表される: `State = (Board, Player, Phase)`
+
+- **Board**: 19x19の盤面
+- **Player**: 手番（0=先手, 1=後手）
+- **Phase**: 現在のフェーズ（属性付き）
+
+フェーズは「次にどのような選択が可能か」を決定する：
+
+| Phase | 説明 | 属性 |
+|-------|------|------|
+| `PieceSelect` | 駒選択 | なし |
+| `DestSelect` | 移動先選択 | `selected_piece` |
+| `MultiStep` | マルチステップ移動中 | `current_pos`, `remaining_steps`, `can_stop`, etc. |
+| `Promotion` | 成り判断 | `piece_pos`, `piece_id`, `promotes_to` |
+| `Shooting` | 射撃 | `shooter_pos`, `targets`, `remaining_shots` |
+| `GameOver` | 終了 | `winner`, `reason` |
+
+**設計原則**:
+1. 駒定義ファイル（`pieces/*.py`）は各フェーズでの選択肢を計算するための情報源
+2. 棋譜は状態遷移ごとに1エントリ記録
+3. `undo()`は直前の1エントリをpopし、対応する遷移を逆転
+
+詳細: [docs/notes/kifu_and_undo_design.md](../docs/notes/kifu_and_undo_design.md)
 
 ## Key Files
 
