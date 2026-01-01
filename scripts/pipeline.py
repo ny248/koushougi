@@ -1,16 +1,16 @@
 """訓練パイプライン
 
-棋譜生成と訓練を繰り返すオーケストレーションスクリプト。
+JSON形式の訓練計画を読み込んで実行するオーケストレーター。
 
 Usage:
-    # Phase 1: Minimax同士で教師データ生成 → 教師あり学習
-    python scripts/pipeline.py bootstrap --games 500 --output models/bootstrap_v1
+    # 計画ファイルから実行
+    python scripts/pipeline.py run training_plan.json
 
-    # Phase 2: NN vs Minimax で自己対戦 → 強化学習（繰り返し）
-    python scripts/pipeline.py selfplay --model models/bootstrap_v1 --output models/rl_v1 --iterations 10
+    # サンプル計画を生成
+    python scripts/pipeline.py init --output training_plan.json
 
-    # フルパイプライン（bootstrap → selfplay）
-    python scripts/pipeline.py full --output models/full_v1 --bootstrap-games 500 --selfplay-iterations 10
+    # 計画の検証
+    python scripts/pipeline.py validate training_plan.json
 """
 
 import sys
@@ -27,6 +27,69 @@ from datetime import datetime
 from scripts.lib.logger import setup_logger
 
 
+SAMPLE_PLAN = {
+    "name": "koushougi_training_v1",
+    "description": "広将棋AI訓練計画",
+    "output_dir": "models/training_v1",
+    "common": {
+        "lite": True,
+        "game_timeout": 60,
+        "minimax_depth": 1,
+        "batch_size": 64,
+    },
+    "phases": [
+        {
+            "name": "bootstrap",
+            "type": "generate",
+            "games": 500,
+            "mode": "minimax-vs-minimax",
+        },
+        {
+            "name": "supervised",
+            "type": "train",
+            "method": "supervised",
+            "data": "bootstrap",
+            "epochs": 20,
+            "lr": 0.001,
+        },
+        {
+            "name": "selfplay_1",
+            "type": "generate",
+            "games": 200,
+            "mode": "nn-vs-minimax",
+            "model": "supervised",
+            "epsilon": 0.5,
+        },
+        {
+            "name": "reinforce_1",
+            "type": "train",
+            "method": "reinforce",
+            "data": ["bootstrap", "selfplay_1"],
+            "model": "supervised",
+            "epochs": 20,
+            "lr": 0.0001,
+        },
+        {
+            "name": "selfplay_2",
+            "type": "generate",
+            "games": 200,
+            "mode": "nn-vs-minimax",
+            "model": "reinforce_1",
+            "epsilon": 0.3,
+        },
+        {
+            "name": "reinforce_2",
+            "type": "train",
+            "method": "reinforce",
+            "data": ["bootstrap", "selfplay_1", "selfplay_2"],
+            "model": "reinforce_1",
+            "epochs": 20,
+            "lr": 0.0001,
+        },
+    ],
+}
+
+
 def run_command(cmd: list[str], logger, timeout: int = None) -> bool:
     """コマンドを実行"""
     logger.info(f"実行: {' '.join(cmd)}")
@@ -41,286 +104,269 @@ def run_command(cmd: list[str], logger, timeout: int = None) -> bool:
         return False
 
 
-def bootstrap(args, logger):
-    """Phase 1: Minimax同士で教師データ → 教師あり学習"""
-    logger.info("=== Bootstrap Phase ===")
+def resolve_path(plan: dict, phase_name: str, suffix: str) -> Path:
+    """フェーズの出力パスを解決"""
+    output_dir = Path(plan["output_dir"])
+    return output_dir / phase_name / suffix
 
-    output_dir = Path(args.output)
+
+def resolve_model_path(plan: dict, model_ref: str, completed: dict) -> Path:
+    """モデル参照をパスに解決"""
+    if model_ref in completed:
+        # 完了済みフェーズの出力を参照
+        return resolve_path(plan, model_ref, "best_model.pth")
+    else:
+        # 外部パス
+        return Path(model_ref)
+
+
+def resolve_data_paths(plan: dict, data_ref, completed: dict) -> list[Path]:
+    """データ参照をパスリストに解決"""
+    if isinstance(data_ref, str):
+        data_ref = [data_ref]
+
+    paths = []
+    for ref in data_ref:
+        if ref in completed:
+            paths.append(resolve_path(plan, ref, "games.jsonl"))
+        else:
+            paths.append(Path(ref))
+    return paths
+
+
+def run_generate_phase(plan: dict, phase: dict, completed: dict, logger) -> bool:
+    """棋譜生成フェーズを実行"""
+    common = plan.get("common", {})
+    phase_name = phase["name"]
+    output_dir = resolve_path(plan, phase_name, "")
     output_dir.mkdir(parents=True, exist_ok=True)
-    data_dir = output_dir / "data"
-    data_dir.mkdir(exist_ok=True)
 
-    # 棋譜生成
-    games_file = data_dir / "bootstrap_games.jsonl"
-    logger.info(f"棋譜生成: {args.games}ゲーム")
+    games_file = output_dir / "games.jsonl"
 
     cmd = [
         "python", "scripts/generate_games.py",
-        "--games", str(args.games),
+        "--games", str(phase.get("games", 100)),
         "--output", str(games_file),
-        "--mode", "minimax-vs-minimax",
-        "--minimax-depth", str(args.minimax_depth),
-        "--timeout", str(args.game_timeout),
+        "--mode", phase.get("mode", "minimax-vs-minimax"),
+        "--minimax-depth", str(phase.get("minimax_depth", common.get("minimax_depth", 1))),
+        "--timeout", str(phase.get("game_timeout", common.get("game_timeout", 60))),
+        "--epsilon", str(phase.get("epsilon", 0.3)),
     ]
-    if args.lite:
+
+    # モデル指定
+    if "model" in phase:
+        model_path = resolve_model_path(plan, phase["model"], completed)
+        if model_path.exists():
+            cmd.extend(["--model", str(model_path)])
+
+    if common.get("lite") or phase.get("lite"):
         cmd.append("--lite")
 
-    if not run_command(cmd, logger, timeout=args.games * args.game_timeout + 300):
-        logger.error("棋譜生成失敗")
+    timeout = phase.get("games", 100) * phase.get("game_timeout", common.get("game_timeout", 60)) + 300
+    return run_command(cmd, logger, timeout=timeout)
+
+
+def run_train_phase(plan: dict, phase: dict, completed: dict, logger) -> bool:
+    """訓練フェーズを実行"""
+    common = plan.get("common", {})
+    phase_name = phase["name"]
+    output_dir = resolve_path(plan, phase_name, "")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    method = phase.get("method", "supervised")
+
+    # データパス解決
+    data_paths = resolve_data_paths(plan, phase["data"], completed)
+    existing_paths = [p for p in data_paths if p.exists()]
+    if not existing_paths:
+        logger.error(f"データが見つかりません: {data_paths}")
         return False
 
-    # 教師あり学習
-    logger.info(f"教師あり学習: {args.epochs}エポック")
+    # 複数データの場合、ディレクトリを指定するか最初のファイルを使用
+    if len(existing_paths) == 1:
+        data_arg = str(existing_paths[0])
+    else:
+        # 複数ファイルの場合、シンボリックリンクで統合ディレクトリを作成
+        data_dir = output_dir / "data"
+        data_dir.mkdir(exist_ok=True)
+        for i, p in enumerate(existing_paths):
+            link = data_dir / f"{i:03d}_{p.stem}.jsonl"
+            if not link.exists():
+                link.symlink_to(p.resolve())
+        data_arg = str(data_dir)
 
     cmd = [
-        "python", "scripts/train.py", "supervised",
-        "--data", str(games_file),
+        "python", "scripts/train.py", method,
+        "--data", data_arg,
         "--output", str(output_dir),
-        "--epochs", str(args.epochs),
-        "--batch-size", str(args.batch_size),
-        "--lr", str(args.lr),
+        "--epochs", str(phase.get("epochs", 20)),
+        "--batch-size", str(phase.get("batch_size", common.get("batch_size", 64))),
+        "--lr", str(phase.get("lr", 0.001 if method == "supervised" else 0.0001)),
     ]
-    if args.lite:
+
+    # モデル指定
+    if "model" in phase:
+        model_path = resolve_model_path(plan, phase["model"], completed)
+        if model_path.exists():
+            cmd.extend(["--load", str(model_path)])
+
+    if common.get("lite") or phase.get("lite"):
         cmd.append("--lite")
 
-    if not run_command(cmd, logger, timeout=args.epochs * 300):
-        logger.error("教師あり学習失敗")
+    timeout = phase.get("epochs", 20) * 600
+    return run_command(cmd, logger, timeout=timeout)
+
+
+def run_plan(plan: dict, logger, resume_from: str = None) -> bool:
+    """訓練計画を実行"""
+    logger.info(f"=== 訓練計画: {plan.get('name', 'unnamed')} ===")
+    logger.info(f"説明: {plan.get('description', '')}")
+
+    output_dir = Path(plan["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 進捗ファイル
+    progress_file = output_dir / "progress.json"
+    if progress_file.exists():
+        with open(progress_file) as f:
+            progress = json.load(f)
+    else:
+        progress = {"completed": [], "started_at": datetime.now().isoformat()}
+
+    completed = {name: True for name in progress["completed"]}
+
+    # レジューム位置を探す
+    skip = resume_from is not None
+    if resume_from and resume_from not in [p["name"] for p in plan["phases"]]:
+        logger.error(f"フェーズが見つかりません: {resume_from}")
         return False
 
-    logger.info(f"Bootstrap完了: {output_dir}")
-    return True
+    for phase in plan["phases"]:
+        phase_name = phase["name"]
 
+        if skip:
+            if phase_name == resume_from:
+                skip = False
+            else:
+                logger.info(f"スキップ: {phase_name}")
+                continue
 
-def selfplay(args, logger):
-    """Phase 2: NN vs Minimax で自己対戦 → 強化学習"""
-    logger.info("=== Self-Play Phase ===")
-
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    data_dir = output_dir / "data"
-    data_dir.mkdir(exist_ok=True)
-
-    # 初期モデル
-    if args.model:
-        current_model = Path(args.model) / "best_model.pth"
-        if not current_model.exists():
-            current_model = Path(args.model) / "final_model.pth"
-    else:
-        current_model = None
-
-    stats = {
-        "iterations": [],
-        "start_time": datetime.now().isoformat(),
-    }
-
-    for iteration in range(1, args.iterations + 1):
-        logger.info(f"--- Iteration {iteration}/{args.iterations} ---")
-
-        iter_data = data_dir / f"iter_{iteration:03d}.jsonl"
-
-        # 棋譜生成（NN vs Minimax）
-        logger.info(f"棋譜生成: {args.games_per_iter}ゲーム")
-
-        cmd = [
-            "python", "scripts/generate_games.py",
-            "--games", str(args.games_per_iter),
-            "--output", str(iter_data),
-            "--mode", "nn-vs-minimax",
-            "--minimax-depth", str(args.minimax_depth),
-            "--epsilon", str(args.epsilon),
-            "--timeout", str(args.game_timeout),
-        ]
-        if current_model and current_model.exists():
-            cmd.extend(["--model", str(current_model)])
-        if args.lite:
-            cmd.append("--lite")
-
-        if not run_command(cmd, logger, timeout=args.games_per_iter * args.game_timeout + 300):
-            logger.warning(f"Iteration {iteration}: 棋譜生成に問題あり、スキップ")
+        if phase_name in completed:
+            logger.info(f"完了済み: {phase_name}")
             continue
 
-        # 統計収集
-        iter_stats = _collect_game_stats(iter_data)
-        logger.info(f"  勝率: {iter_stats.get('nn_win_rate', 0):.1%}")
+        logger.info(f"--- フェーズ: {phase_name} ({phase['type']}) ---")
 
-        # 強化学習
-        logger.info(f"強化学習: {args.epochs_per_iter}エポック")
+        if phase["type"] == "generate":
+            success = run_generate_phase(plan, phase, completed, logger)
+        elif phase["type"] == "train":
+            success = run_train_phase(plan, phase, completed, logger)
+        else:
+            logger.error(f"不明なフェーズタイプ: {phase['type']}")
+            success = False
 
-        cmd = [
-            "python", "scripts/train.py", "reinforce",
-            "--data", str(data_dir),
-            "--output", str(output_dir),
-            "--epochs", str(args.epochs_per_iter),
-            "--batch-size", str(args.batch_size),
-            "--lr", str(args.lr),
-            "--resume",
-        ]
-        if args.lite:
-            cmd.append("--lite")
+        if success:
+            progress["completed"].append(phase_name)
+            completed[phase_name] = True
+            with open(progress_file, "w") as f:
+                json.dump(progress, f, indent=2)
+            logger.info(f"完了: {phase_name}")
+        else:
+            logger.error(f"失敗: {phase_name}")
+            return False
 
-        if not run_command(cmd, logger, timeout=args.epochs_per_iter * 300):
-            logger.warning(f"Iteration {iteration}: 学習に問題あり")
+    progress["finished_at"] = datetime.now().isoformat()
+    with open(progress_file, "w") as f:
+        json.dump(progress, f, indent=2)
 
-        # モデル更新
-        current_model = output_dir / "best_model.pth"
-
-        # 統計記録
-        iter_stats["iteration"] = iteration
-        stats["iterations"].append(iter_stats)
-
-        with open(output_dir / "pipeline_stats.json", "w") as f:
-            json.dump(stats, f, indent=2, ensure_ascii=False)
-
-    stats["end_time"] = datetime.now().isoformat()
-    with open(output_dir / "pipeline_stats.json", "w") as f:
-        json.dump(stats, f, indent=2, ensure_ascii=False)
-
-    logger.info(f"Self-Play完了: {output_dir}")
+    logger.info("=== 訓練計画完了 ===")
     return True
 
 
-def full_pipeline(args, logger):
-    """フルパイプライン（bootstrap → selfplay）"""
-    logger.info("=== Full Pipeline ===")
+def validate_plan(plan: dict, logger) -> bool:
+    """訓練計画を検証"""
+    errors = []
 
-    output_dir = Path(args.output)
+    if "output_dir" not in plan:
+        errors.append("output_dir が必要です")
 
-    # Bootstrap
-    bootstrap_args = argparse.Namespace(
-        output=str(output_dir / "bootstrap"),
-        games=args.bootstrap_games,
-        epochs=args.bootstrap_epochs,
-        batch_size=args.batch_size,
-        lr=0.001,
-        minimax_depth=args.minimax_depth,
-        game_timeout=args.game_timeout,
-        lite=args.lite,
-    )
-    if not bootstrap(bootstrap_args, logger):
+    if "phases" not in plan or not plan["phases"]:
+        errors.append("phases が必要です")
+
+    phase_names = set()
+    for i, phase in enumerate(plan.get("phases", [])):
+        if "name" not in phase:
+            errors.append(f"phases[{i}]: name が必要です")
+        elif phase["name"] in phase_names:
+            errors.append(f"phases[{i}]: 重複した名前 '{phase['name']}'")
+        else:
+            phase_names.add(phase["name"])
+
+        if "type" not in phase:
+            errors.append(f"phases[{i}]: type が必要です")
+        elif phase["type"] not in ["generate", "train"]:
+            errors.append(f"phases[{i}]: 不明なtype '{phase['type']}'")
+
+        if phase.get("type") == "train" and "data" not in phase:
+            errors.append(f"phases[{i}]: train には data が必要です")
+
+    if errors:
+        for e in errors:
+            logger.error(e)
         return False
 
-    # Self-Play
-    selfplay_args = argparse.Namespace(
-        output=str(output_dir / "selfplay"),
-        model=str(output_dir / "bootstrap"),
-        iterations=args.selfplay_iterations,
-        games_per_iter=args.selfplay_games,
-        epochs_per_iter=args.selfplay_epochs,
-        batch_size=args.batch_size,
-        lr=0.0001,
-        epsilon=args.epsilon,
-        minimax_depth=args.minimax_depth,
-        game_timeout=args.game_timeout,
-        lite=args.lite,
-    )
-    if not selfplay(selfplay_args, logger):
-        return False
-
-    logger.info(f"フルパイプライン完了: {output_dir}")
+    logger.info("計画は有効です")
     return True
 
 
-def _collect_game_stats(games_file: Path) -> dict:
-    """棋譜ファイルから統計を収集"""
-    stats = {
-        "total": 0,
-        "sente_wins": 0,
-        "gote_wins": 0,
-        "draws": 0,
-        "nn_wins": 0,
-        "minimax_wins": 0,
-    }
-
-    if not games_file.exists():
-        return stats
-
-    with open(games_file) as f:
-        for line in f:
-            game = json.loads(line)
-            stats["total"] += 1
-
-            winner = game.get("kifu", {}).get("winner")
-            players = game.get("players", {})
-
-            if winner == 0:
-                stats["sente_wins"] += 1
-                if "neural" in players.get("sente", ""):
-                    stats["nn_wins"] += 1
-                else:
-                    stats["minimax_wins"] += 1
-            elif winner == 1:
-                stats["gote_wins"] += 1
-                if "neural" in players.get("gote", ""):
-                    stats["nn_wins"] += 1
-                else:
-                    stats["minimax_wins"] += 1
-            else:
-                stats["draws"] += 1
-
-    if stats["total"] > 0:
-        stats["nn_win_rate"] = stats["nn_wins"] / stats["total"]
-        stats["minimax_win_rate"] = stats["minimax_wins"] / stats["total"]
-
-    return stats
+def init_plan(output: str, logger):
+    """サンプル計画を出力"""
+    with open(output, "w") as f:
+        json.dump(SAMPLE_PLAN, f, indent=2, ensure_ascii=False)
+    logger.info(f"サンプル計画を出力: {output}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="訓練パイプライン")
-    subparsers = parser.add_subparsers(dest="mode", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # Bootstrap
-    bp = subparsers.add_parser("bootstrap", help="Minimax同士で教師データ生成 → 教師あり学習")
-    bp.add_argument("--output", "-o", type=str, default="models/bootstrap", help="出力ディレクトリ")
-    bp.add_argument("--games", type=int, default=500, help="生成ゲーム数")
-    bp.add_argument("--epochs", type=int, default=20, help="学習エポック数")
-    bp.add_argument("--batch-size", type=int, default=64)
-    bp.add_argument("--lr", type=float, default=0.001)
-    bp.add_argument("--minimax-depth", type=int, default=1)
-    bp.add_argument("--game-timeout", type=int, default=60)
-    bp.add_argument("--lite", action="store_true")
-    bp.add_argument("--verbose", "-v", action="store_true")
+    # run
+    run_p = subparsers.add_parser("run", help="計画を実行")
+    run_p.add_argument("plan", type=str, help="計画ファイル (JSON)")
+    run_p.add_argument("--resume-from", type=str, help="指定フェーズから再開")
+    run_p.add_argument("--verbose", "-v", action="store_true")
 
-    # Self-Play
-    sp = subparsers.add_parser("selfplay", help="NN vs Minimax で自己対戦 → 強化学習")
-    sp.add_argument("--output", "-o", type=str, default="models/selfplay", help="出力ディレクトリ")
-    sp.add_argument("--model", type=str, help="初期モデルのディレクトリ")
-    sp.add_argument("--iterations", type=int, default=10, help="イテレーション回数")
-    sp.add_argument("--games-per-iter", type=int, default=100, help="イテレーションあたりのゲーム数")
-    sp.add_argument("--epochs-per-iter", type=int, default=10, help="イテレーションあたりのエポック数")
-    sp.add_argument("--batch-size", type=int, default=64)
-    sp.add_argument("--lr", type=float, default=0.0001)
-    sp.add_argument("--epsilon", type=float, default=0.3, help="探索率")
-    sp.add_argument("--minimax-depth", type=int, default=1)
-    sp.add_argument("--game-timeout", type=int, default=60)
-    sp.add_argument("--lite", action="store_true")
-    sp.add_argument("--verbose", "-v", action="store_true")
+    # init
+    init_p = subparsers.add_parser("init", help="サンプル計画を生成")
+    init_p.add_argument("--output", "-o", type=str, default="training_plan.json")
+    init_p.add_argument("--verbose", "-v", action="store_true")
 
-    # Full Pipeline
-    fp = subparsers.add_parser("full", help="フルパイプライン")
-    fp.add_argument("--output", "-o", type=str, default="models/full", help="出力ディレクトリ")
-    fp.add_argument("--bootstrap-games", type=int, default=500)
-    fp.add_argument("--bootstrap-epochs", type=int, default=20)
-    fp.add_argument("--selfplay-iterations", type=int, default=10)
-    fp.add_argument("--selfplay-games", type=int, default=100)
-    fp.add_argument("--selfplay-epochs", type=int, default=10)
-    fp.add_argument("--batch-size", type=int, default=64)
-    fp.add_argument("--epsilon", type=float, default=0.3)
-    fp.add_argument("--minimax-depth", type=int, default=1)
-    fp.add_argument("--game-timeout", type=int, default=60)
-    fp.add_argument("--lite", action="store_true")
-    fp.add_argument("--verbose", "-v", action="store_true")
+    # validate
+    val_p = subparsers.add_parser("validate", help="計画を検証")
+    val_p.add_argument("plan", type=str, help="計画ファイル (JSON)")
+    val_p.add_argument("--verbose", "-v", action="store_true")
 
     args = parser.parse_args()
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logger = setup_logger("pipeline", level=log_level)
 
-    if args.mode == "bootstrap":
-        bootstrap(args, logger)
-    elif args.mode == "selfplay":
-        selfplay(args, logger)
-    elif args.mode == "full":
-        full_pipeline(args, logger)
+    if args.command == "run":
+        with open(args.plan) as f:
+            plan = json.load(f)
+        if not validate_plan(plan, logger):
+            sys.exit(1)
+        if not run_plan(plan, logger, args.resume_from):
+            sys.exit(1)
+
+    elif args.command == "init":
+        init_plan(args.output, logger)
+
+    elif args.command == "validate":
+        with open(args.plan) as f:
+            plan = json.load(f)
+        if not validate_plan(plan, logger):
+            sys.exit(1)
 
 
 if __name__ == "__main__":
