@@ -1,4 +1,4 @@
-"""Minimax AI（GameStateコピー方式）"""
+"""Minimax AI（undo方式）"""
 
 import random
 import logging
@@ -13,7 +13,6 @@ from backend.domain.action import (
 )
 from ai.base import BaseAI
 from ai.minimax.evaluator import evaluate
-from ai.greedy.piece_values import get_piece_value, select_best_shoot_target
 
 logger = logging.getLogger('MinimaxPlayer')
 
@@ -22,16 +21,16 @@ class MinimaxPlayer(BaseAI):
     """Minimax探索を行うAI
 
     設計原則:
-    - GameStateをコピーして探索（undoは不要）
-    - 各フェーズで可能な選択肢を列挙し、コピーに対して適用→評価
-    - 元のGameStateは変更しない
+    - 探索開始時に1回だけstate.copy()
+    - 探索中はapply_action→再帰→undoで状態を戻す
+    - コピーのオーバーヘッドを最小化
     """
 
     def __init__(self, depth: int = 8, max_moves: int = 50, epsilon: float = 0.0):
         """
         Args:
             depth: 探索の深さ（状態遷移の回数）
-            max_moves: 各ノードで探索する最大手数
+            max_moves: 各ノードで探索する最大手数（未使用、将来用）
             epsilon: ランダムに手を選ぶ確率
         """
         self.depth = depth
@@ -45,7 +44,7 @@ class MinimaxPlayer(BaseAI):
             return self._choose_random_action(state)
 
         # 最善のアクションを探索
-        best_action = self._search_best_action_from_state(state)
+        best_action = self._search_best_action(state)
 
         if best_action is None:
             # フォールバック: ランダム
@@ -55,7 +54,7 @@ class MinimaxPlayer(BaseAI):
 
     def _choose_random_action(self, state: GameState) -> Action:
         """ランダムにアクションを選択（フォールバック用）"""
-        actions = self._get_actions_from_state(state)
+        actions = self._get_actions(state)
         if not actions:
             # どうしようもない場合のデフォルト
             return SelectPieceAction(pos=(0, 0))
@@ -82,42 +81,40 @@ class MinimaxPlayer(BaseAI):
         result = engine.apply_action(action)
         return result.success
 
-    def _search_best_action_from_state(self, state: GameState) -> Optional[Action]:
+    def _search_best_action(self, state: GameState) -> Optional[Action]:
         """現在の状態で最善のアクションを探索
 
-        GameStateをコピーして探索を行う。元のstateは変更しない。
-        Alpha-Beta枝刈りを使用。
+        探索開始時に1回だけコピーし、以降はundo方式で探索。
         """
-        actions = self._get_actions_from_state(state)
+        # 探索用に1回だけコピー
+        search_state = state.copy()
+        search_engine = GameEngine(state=search_state, kifu_mode=KifuMode.NONE)
+
+        actions = self._get_actions(search_state)
         if not actions:
             return None
 
-        player = state.current_player
+        player = search_state.current_player
         best_actions = []
         best_value = float('-inf')
         alpha = float('-inf')
         beta = float('inf')
 
-        logger.debug(f"_search_best_action開始: player={player}, phase={state.phase}")
+        # ムーブオーダリング
+        actions = self._order_actions(search_engine, actions, player, maximizing=True)
 
         for action in actions:
-            # 状態をコピーして探索用engineを作成
-            search_state = state.copy()
-            search_engine = GameEngine(state=search_state, kifu_mode=KifuMode.NONE)
-
             # アクションを適用
             result = search_engine.apply_action(action)
             if not result.success:
-                logger.debug(f"  action={action} apply失敗")
                 continue
-
-            logger.debug(f"  action={action} apply成功: phase={search_state.phase}")
 
             # Alpha-Beta探索（プレイヤーが変わったかでmaximizingを決定）
             next_maximizing = search_state.current_player == player
-            value = self._alphabeta(search_state, self.depth - 1, alpha, beta, next_maximizing, player)
+            value = self._alphabeta(search_engine, self.depth - 1, alpha, beta, next_maximizing, player)
 
-            logger.debug(f"    value={value}")
+            # undoで状態を戻す
+            search_engine.undo()
 
             if value > best_value:
                 best_value = value
@@ -128,52 +125,69 @@ class MinimaxPlayer(BaseAI):
             # alphaを更新（ルートノードはmaximizing）
             alpha = max(alpha, value)
 
-        logger.debug(f"_search_best_action終了: best_value={best_value}")
-
         return random.choice(best_actions) if best_actions else None
 
-    def _alphabeta(self, state: GameState, depth: int,
+    def _order_actions(self, engine: GameEngine, actions: list[Action],
+                       original_player: int, maximizing: bool) -> list[Action]:
+        """ムーブオーダリング（undo方式）
+
+        各アクションを適用→評価→undoして、評価値順にソート。
+        """
+        scored_actions = []
+
+        for action in actions:
+            result = engine.apply_action(action)
+            if result.success:
+                score = self._evaluate(engine, original_player)
+                engine.undo()
+                scored_actions.append((score, action))
+            # 失敗した手は除外（どうせ探索で弾かれる）
+
+        # maximizingなら降順、そうでなければ昇順
+        scored_actions.sort(key=lambda x: x[0], reverse=maximizing)
+        return [action for _, action in scored_actions]
+
+    def _alphabeta(self, engine: GameEngine, depth: int,
                    alpha: float, beta: float,
                    maximizing: bool, original_player: int) -> float:
-        """Alpha-Beta枝刈り付きMinimax
+        """Alpha-Beta枝刈り付きMinimax（undo方式）
 
         Args:
-            state: 探索対象の状態（コピー済み）
+            engine: 探索用エンジン（状態を共有）
             depth: 残り探索深さ
             alpha: 最大化側の下限値
             beta: 最小化側の上限値
             maximizing: 最大化ノードかどうか
             original_player: 評価の基準となるプレイヤー
-
-        Note:
-            広将棋では1ターン内に複数のアクションがあるため、
-            アクションごとに手番が変わるわけではない。
-            手番の変化は current_player の変化で検知する。
         """
+        state = engine.state
+
         # 終了条件
         if depth == 0 or state.winner is not None:
-            return self._evaluate_state(state, original_player)
+            return self._evaluate(engine, original_player)
 
-        actions = self._get_actions_from_state(state)
+        actions = self._get_actions(state)
         if not actions:
-            return self._evaluate_state(state, original_player)
+            return self._evaluate(engine, original_player)
+
+        # ムーブオーダリング
+        actions = self._order_actions(engine, actions, original_player, maximizing)
 
         if maximizing:
             value = float('-inf')
             for action in actions:
-                # 状態をコピー
-                child_state = state.copy()
-                child_engine = GameEngine(state=child_state, kifu_mode=KifuMode.NONE)
-
-                result = child_engine.apply_action(action)
+                result = engine.apply_action(action)
                 if not result.success:
                     continue
 
                 # プレイヤーが変わったときだけmaximizingを切り替える
-                next_maximizing = child_state.current_player == original_player
+                next_maximizing = state.current_player == original_player
                 value = max(value, self._alphabeta(
-                    child_state, depth - 1, alpha, beta, next_maximizing, original_player
+                    engine, depth - 1, alpha, beta, next_maximizing, original_player
                 ))
+
+                # undoで状態を戻す
+                engine.undo()
 
                 # Alpha-Beta枝刈り
                 alpha = max(alpha, value)
@@ -184,19 +198,18 @@ class MinimaxPlayer(BaseAI):
         else:
             value = float('inf')
             for action in actions:
-                # 状態をコピー
-                child_state = state.copy()
-                child_engine = GameEngine(state=child_state, kifu_mode=KifuMode.NONE)
-
-                result = child_engine.apply_action(action)
+                result = engine.apply_action(action)
                 if not result.success:
                     continue
 
                 # プレイヤーが変わったときだけmaximizingを切り替える
-                next_maximizing = child_state.current_player == original_player
+                next_maximizing = state.current_player == original_player
                 value = min(value, self._alphabeta(
-                    child_state, depth - 1, alpha, beta, next_maximizing, original_player
+                    engine, depth - 1, alpha, beta, next_maximizing, original_player
                 ))
+
+                # undoで状態を戻す
+                engine.undo()
 
                 # Alpha-Beta枝刈り
                 beta = min(beta, value)
@@ -205,12 +218,11 @@ class MinimaxPlayer(BaseAI):
 
             return value
 
-    def _evaluate_state(self, state: GameState, player: int) -> float:
-        """GameStateを評価"""
-        temp_engine = GameEngine(state=state, kifu_mode=KifuMode.NONE)
-        return evaluate(temp_engine, player)
+    def _evaluate(self, engine: GameEngine, player: int) -> float:
+        """盤面を評価"""
+        return evaluate(engine, player)
 
-    def _get_actions_from_state(self, state: GameState) -> list[Action]:
+    def _get_actions(self, state: GameState) -> list[Action]:
         """GameStateから可能なアクションを取得"""
         phase = state.phase
 
@@ -299,4 +311,3 @@ class MinimaxPlayer(BaseAI):
                 actions.append(ShootAction(target=target))
 
         return actions
-

@@ -1,0 +1,2 @@
+- AIのMiniMaxに時間がかかりすぎる。
+- selectをしてから別のコマをselectした場合、一回めのselectは記録されるべきではない。
