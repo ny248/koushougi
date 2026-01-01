@@ -47,6 +47,25 @@ python scripts/train.py supervised --data data/experiences.pt --output models/sl
 python scripts/train.py reinforce --data data/experiences.pt --output models/rl_v1 --lite
 ```
 
+### 訓練パイプライン
+
+`models/<run_dir>/training_context.json` に計画と進捗を統合して保存します。
+中断・再開は同じディレクトリを指定して実行します。
+
+```bash
+# 1. コンテキスト初期化（既存 plan を取り込む）
+python scripts/pipeline.py init --dir models/training_v1 --plan training_plan.json
+
+# 2. 検証
+python scripts/pipeline.py validate --dir models/training_v1
+
+# 3. 実行
+python scripts/pipeline.py run --dir models/training_v1
+
+# 任意: 指定フェーズから再開
+python scripts/pipeline.py run --dir models/training_v1 --resume-from supervised
+```
+
 ### テスト
 
 ```bash
