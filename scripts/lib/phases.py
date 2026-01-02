@@ -294,17 +294,26 @@ class TrainPhase(Phase):
             ctx.logger.error("データが見つかりません")
             return PhaseResult(success=False)
 
-        # 複数データの場合はディレクトリにシンボリックリンク
-        if len(data_paths) == 1:
-            data_arg = str(data_paths[0])
-        else:
-            data_dir = output_dir / "data"
-            data_dir.mkdir(exist_ok=True)
-            for i, p in enumerate(data_paths):
-                link = data_dir / f"{i:03d}_{p.stem}.jsonl"
-                if not link.exists():
-                    link.symlink_to(p.resolve())
-            data_arg = str(data_dir)
+        # JSONL を torch 形式に変換
+        converted_path = output_dir / "experiences.pt"
+        if not converted_path.exists():
+            ctx.logger.info("棋譜データを学習用形式に変換中...")
+            for jsonl_path in data_paths:
+                convert_cmd = [
+                    "python",
+                    "scripts/convert_kifu.py",
+                    "--input",
+                    str(jsonl_path),
+                    "--output",
+                    str(converted_path),
+                ]
+                result = subprocess.run(convert_cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    ctx.logger.error(f"変換エラー: {result.stderr}")
+                    return PhaseResult(success=False)
+            ctx.logger.info("変換完了")
+
+        data_arg = str(converted_path)
 
         cmd = [
             "python",
