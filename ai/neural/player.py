@@ -6,6 +6,12 @@ import torch
 import torch.nn.functional as F
 
 from backend.rules.game_engine import GameEngine, GamePhase
+from backend.domain.game_state import GameState
+from backend.domain.action import (
+    Action, SelectPieceAction, SelectDestinationAction,
+    StopMoveAction, SelectNextStepAction,
+    DecidePromotionAction, ShootAction, SkipShootAction
+)
 from ai.base import BaseAI
 from ai.neural.model import (
     create_model, encode_board, pos_to_index, index_to_pos, NUM_SQUARES
@@ -27,6 +33,40 @@ class NeuralPlayer(BaseAI):
         self.device = device
         self.epsilon = epsilon
         self.temperature = temperature
+
+    def choose_action(self, state: GameState) -> Action:
+        """現在の状態から次のアクションを選択"""
+        from backend.rules.game_engine import GameEngine
+
+        engine = GameEngine(state)
+        phase = engine.phase
+
+        if phase == GamePhase.PIECE_SELECT:
+            pos = self.choose_piece(engine)
+            return SelectPieceAction(pos=pos)
+
+        elif phase == GamePhase.DEST_SELECT:
+            pos = self.choose_destination(engine)
+            return SelectDestinationAction(pos=pos)
+
+        elif phase == GamePhase.MULTI_STEP_MOVE:
+            if engine.can_stop_now() and self.choose_stop(engine):
+                return StopMoveAction()
+            pos = self.choose_next_step(engine)
+            return SelectNextStepAction(pos=pos)
+
+        elif phase == GamePhase.PROMOTION:
+            promote = self.choose_promotion(engine)
+            return DecidePromotionAction(promote=promote)
+
+        elif phase == GamePhase.SHOOTING:
+            target = self.choose_shoot_target(engine)
+            if target is None:
+                return SkipShootAction()
+            return ShootAction(target=target)
+
+        else:
+            raise ValueError(f"Unexpected phase: {phase}")
 
     def choose_piece(self, engine: GameEngine) -> tuple[int, int]:
         """動かす駒を選択"""
