@@ -1,4 +1,4 @@
-"""Minimax AI（undo方式 + 反復深化）"""
+"""Minimax AI（undo方式 + 反復深化 + Transposition Table）"""
 
 import random
 import logging
@@ -13,6 +13,7 @@ from backend.domain.action import (
 )
 from ai.base import BaseAI
 from ai.minimax.evaluator import evaluate
+from ai.minimax.transposition_table import TranspositionTable, TTEntryType
 
 logger = logging.getLogger('MinimaxPlayer')
 
@@ -24,21 +25,28 @@ class MinimaxPlayer(BaseAI):
     - 探索開始時に1回だけstate.copy()
     - 探索中はapply_action→再帰→undoで状態を戻す
     - 反復深化で浅い深さから順に探索し、ムーブオーダリングを改善
+    - Transposition Tableで同一局面の再計算を防ぐ
     """
 
     def __init__(self, depth: int = 8, max_moves: int = 50, epsilon: float = 0.0,
-                 use_iterative_deepening: bool = True):
+                 use_iterative_deepening: bool = True, use_tt: bool = True,
+                 tt_size: int = 1 << 20):
         """
         Args:
             depth: 探索の深さ（状態遷移の回数）
             max_moves: 各ノードで探索する最大手数（未使用、将来用）
             epsilon: ランダムに手を選ぶ確率
             use_iterative_deepening: 反復深化を使うか
+            use_tt: Transposition Tableを使うか
+            tt_size: Transposition Tableのサイズ
         """
         self.depth = depth
         self.max_moves = max_moves
         self.epsilon = epsilon
         self.use_iterative_deepening = use_iterative_deepening
+        self.use_tt = use_tt
+        # TTは対局を通じて保持（先手/後手で共有）
+        self.tt = TranspositionTable(tt_size) if use_tt else None
 
     def choose_action(self, state: GameState) -> Action:
         """現在の状態から次のアクションを選択"""
@@ -141,6 +149,7 @@ class MinimaxPlayer(BaseAI):
         best_value = float('-inf')
         alpha = float('-inf')
         beta = float('inf')
+        best_action_for_tt: Optional[Action] = None
 
         for action in actions:
             result = engine.apply_action(action)
@@ -156,6 +165,7 @@ class MinimaxPlayer(BaseAI):
             if value > best_value:
                 best_value = value
                 best_actions = [action]
+                best_action_for_tt = action
             elif value == best_value:
                 best_actions.append(action)
 
@@ -164,29 +174,43 @@ class MinimaxPlayer(BaseAI):
         return random.choice(best_actions) if best_actions else None
 
     def _order_actions(self, engine: GameEngine, actions: list[Action],
-                       original_player: int, maximizing: bool) -> list[Action]:
-        """ムーブオーダリング（undo方式）
+                       original_player: int, maximizing: bool,
+                       tt_best: Optional[Action] = None) -> list[Action]:
+        """ムーブオーダリング
 
-        各アクションを適用→評価→undoして、評価値順にソート。
+        TTからの最善手がある場合はそれを先頭に。
+        それ以外は1手読みの評価値でソート。
         """
-        scored_actions = []
+        # TTからの最善手を先頭に
+        if tt_best is not None and tt_best in actions:
+            remaining = [a for a in actions if a != tt_best]
+            # 残りを評価値でソート
+            scored = []
+            for action in remaining:
+                result = engine.apply_action(action)
+                if result.success:
+                    score = self._evaluate(engine, original_player)
+                    engine.undo()
+                    scored.append((score, action))
+            scored.sort(key=lambda x: x[0], reverse=maximizing)
+            return [tt_best] + [a for _, a in scored]
 
+        # TTからの情報がない場合は従来通り
+        scored_actions = []
         for action in actions:
             result = engine.apply_action(action)
             if result.success:
                 score = self._evaluate(engine, original_player)
                 engine.undo()
                 scored_actions.append((score, action))
-            # 失敗した手は除外（どうせ探索で弾かれる）
 
-        # maximizingなら降順、そうでなければ昇順
         scored_actions.sort(key=lambda x: x[0], reverse=maximizing)
         return [action for _, action in scored_actions]
 
     def _alphabeta(self, engine: GameEngine, depth: int,
                    alpha: float, beta: float,
                    maximizing: bool, original_player: int) -> float:
-        """Alpha-Beta枝刈り付きMinimax（undo方式）
+        """Alpha-Beta枝刈り付きMinimax（undo方式 + TT）
 
         Args:
             engine: 探索用エンジン（状態を共有）
@@ -197,6 +221,16 @@ class MinimaxPlayer(BaseAI):
             original_player: 評価の基準となるプレイヤー
         """
         state = engine.state
+        hash_key = state.zobrist_hash
+        original_alpha = alpha
+
+        # TTを参照
+        tt_value = None
+        tt_best_action = None
+        if self.tt is not None:
+            tt_value, tt_best_action = self.tt.probe(hash_key, depth, alpha, beta)
+            if tt_value is not None:
+                return tt_value
 
         # 終了条件
         if depth == 0 or state.winner is not None:
@@ -206,8 +240,10 @@ class MinimaxPlayer(BaseAI):
         if not actions:
             return self._evaluate(engine, original_player)
 
-        # ムーブオーダリング
-        actions = self._order_actions(engine, actions, original_player, maximizing)
+        # ムーブオーダリング（TTからの最善手を優先）
+        actions = self._order_actions(engine, actions, original_player, maximizing, tt_best_action)
+
+        best_action: Optional[Action] = None
 
         if maximizing:
             value = float('-inf')
@@ -218,19 +254,19 @@ class MinimaxPlayer(BaseAI):
 
                 # プレイヤーが変わったときだけmaximizingを切り替える
                 next_maximizing = state.current_player == original_player
-                value = max(value, self._alphabeta(
+                child_value = self._alphabeta(
                     engine, depth - 1, alpha, beta, next_maximizing, original_player
-                ))
+                )
 
-                # undoで状態を戻す
                 engine.undo()
 
-                # Alpha-Beta枝刈り
+                if child_value > value:
+                    value = child_value
+                    best_action = action
+
                 alpha = max(alpha, value)
                 if alpha >= beta:
                     break  # Beta cut-off
-
-            return value
         else:
             value = float('inf')
             for action in actions:
@@ -238,25 +274,47 @@ class MinimaxPlayer(BaseAI):
                 if not result.success:
                     continue
 
-                # プレイヤーが変わったときだけmaximizingを切り替える
                 next_maximizing = state.current_player == original_player
-                value = min(value, self._alphabeta(
+                child_value = self._alphabeta(
                     engine, depth - 1, alpha, beta, next_maximizing, original_player
-                ))
+                )
 
-                # undoで状態を戻す
                 engine.undo()
 
-                # Alpha-Beta枝刈り
+                if child_value < value:
+                    value = child_value
+                    best_action = action
+
                 beta = min(beta, value)
                 if alpha >= beta:
                     break  # Alpha cut-off
 
-            return value
+        # TTに格納
+        if self.tt is not None:
+            if value <= original_alpha:
+                entry_type = TTEntryType.UPPER_BOUND
+            elif value >= beta:
+                entry_type = TTEntryType.LOWER_BOUND
+            else:
+                entry_type = TTEntryType.EXACT
+            self.tt.store(hash_key, depth, value, entry_type, best_action)
+
+        return value
 
     def _evaluate(self, engine: GameEngine, player: int) -> float:
         """盤面を評価"""
         return evaluate(engine, player)
+
+    def get_tt_stats(self) -> Optional[dict]:
+        """TT統計情報を取得"""
+        if self.tt is None:
+            return None
+        return self.tt.get_stats()
+
+    def clear_tt(self) -> None:
+        """TTをクリア（新しい対局開始時に呼ぶ）"""
+        if self.tt is not None:
+            self.tt.clear()
 
     def _get_actions(self, state: GameState) -> list[Action]:
         """GameStateから可能なアクションを取得"""
@@ -282,7 +340,7 @@ class MinimaxPlayer(BaseAI):
         player = state.current_player
         for x in range(19):
             for y in range(19):
-                piece_data = state.board.get(x, y)
+                piece_data = state.get_piece(x, y)
                 if piece_data and piece_data[1] == player:
                     moves = movement.get_legal_moves(state, (x, y))
                     if moves:

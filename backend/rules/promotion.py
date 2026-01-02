@@ -66,7 +66,7 @@ def can_promote(state: GameState, from_pos: tuple[int, int],
     Returns:
         成れるならTrue
     """
-    piece_data = state.board.get(to_pos[0], to_pos[1])
+    piece_data = state.get_piece(to_pos[0], to_pos[1])
     if piece_data is None:
         return False
 
@@ -111,7 +111,7 @@ def execute_promotion(state: GameState, pos: tuple[int, int]) -> Optional[int]:
     Returns:
         成り先の駒ID（成らなければNone）
     """
-    piece_data = state.board.get(pos[0], pos[1])
+    piece_data = state.get_piece(pos[0], pos[1])
     if piece_data is None:
         return None
 
@@ -122,7 +122,7 @@ def execute_promotion(state: GameState, pos: tuple[int, int]) -> Optional[int]:
         return None
 
     # 成りを実行（is_promoted=Trueでセット）
-    state.board.set(pos[0], pos[1], piece.promotes_to, player, is_promoted=True)
+    state.set_piece(pos[0], pos[1], piece.promotes_to, player, is_promoted=True)
     return piece.promotes_to
 
 
@@ -146,7 +146,7 @@ def check_triggered_promotions(state: GameState, promoted_piece_id: int,
     if promoted_piece_id == GUNSHI_ID:
         for x in range(19):
             for y in range(19):
-                piece_data = state.board.get(x, y)
+                piece_data = state.get_piece(x, y)
                 if piece_data is None:
                     continue
 
@@ -156,20 +156,20 @@ def check_triggered_promotions(state: GameState, promoted_piece_id: int,
 
                 # 前衝 -> 天網
                 if pid == ZENSHOU_ID:
-                    state.board.set(x, y, TENMOU_ID, player, is_promoted=True)
+                    state.set_piece(x, y, TENMOU_ID, player, is_promoted=True)
                     result.append(((x, y), ZENSHOU_ID, TENMOU_ID))
 
                 # 後衝 -> 地網
                 if pid == KOUSHOU_ID:
-                    state.board.set(x, y, CHIMOU_ID, player, is_promoted=True)
+                    state.set_piece(x, y, CHIMOU_ID, player, is_promoted=True)
                     result.append(((x, y), KOUSHOU_ID, CHIMOU_ID))
 
         # 敵の毒火を破壊
         enemy = 1 - player
         for x in range(19):
             for y in range(19):
-                piece_data = state.board.get(x, y)
+                piece_data = state.get_piece(x, y)
                 if piece_data and piece_data[0] == DOKUKA_ID and piece_data[1] == enemy:
-                    state.board.remove(x, y)
+                    state.remove_piece(x, y)
 
     return result

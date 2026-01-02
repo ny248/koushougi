@@ -5,6 +5,7 @@ from typing import Optional
 from enum import Enum, auto
 from .board import Board, BOARD_SIZE
 from .kifu import Kifu
+from .zobrist import get_zobrist_table
 
 
 class GamePhase(Enum):
@@ -39,14 +40,80 @@ class GameState:
     pending_shoot: Optional[dict] = None  # 射撃待ち状態
     multi_step_state: Optional[dict] = None  # マルチステップ移動状態
 
+    # Zobrist Hash（盤面+手番の識別子、千日手判定・Transposition Table用）
+    _zobrist_hash: int = 0
+
+    @property
+    def zobrist_hash(self) -> int:
+        """現在のZobrist Hash値を取得"""
+        return self._zobrist_hash
+
+    def compute_zobrist_hash(self) -> int:
+        """盤面全体からZobrist Hashを再計算"""
+        table = get_zobrist_table()
+        self._zobrist_hash = table.compute_full_hash(self.board, self.current_player)
+        return self._zobrist_hash
+
+    def update_zobrist_piece(self, x: int, y: int, piece_id: int, player: int, is_promoted: bool = False) -> None:
+        """駒の追加/削除でZobrist Hashを差分更新（XOR）
+
+        駒を置く時と取る時の両方で同じメソッドを呼ぶ。
+        XORなので2回呼べば元に戻る。
+        """
+        table = get_zobrist_table()
+        self._zobrist_hash ^= table.piece_hash(x, y, piece_id, player, is_promoted)
+
+    def update_zobrist_turn(self) -> None:
+        """手番交代でZobrist Hashを更新"""
+        table = get_zobrist_table()
+        self._zobrist_hash ^= table.turn_hash()
+
     def switch_player(self) -> None:
         """手番を交代"""
+        self.update_zobrist_turn()
         self.current_player = 1 - self.current_player
         self.move_count += 1
 
     def is_game_over(self) -> bool:
         """ゲームが終了しているか"""
         return self.winner is not None
+
+    # ===================
+    # 駒操作（Zobrist Hash自動更新）
+    # ===================
+
+    def set_piece(self, x: int, y: int, piece_id: int, player: int, is_promoted: bool = False) -> None:
+        """駒を配置（Zobrist Hash自動更新）
+
+        既存の駒がある場合は先に除去してから配置する。
+        """
+        # 既存の駒があれば除去（Zobrist Hash更新）
+        existing = self.board.grid[x][y]
+        if existing is not None:
+            old_id, old_player = existing[0], existing[1]
+            old_promoted = existing[2] if len(existing) > 2 else False
+            self.update_zobrist_piece(x, y, old_id, old_player, old_promoted)
+
+        # 新しい駒を配置
+        self.board.grid[x][y] = (piece_id, player, is_promoted)
+        self.update_zobrist_piece(x, y, piece_id, player, is_promoted)
+
+    def remove_piece(self, x: int, y: int) -> None:
+        """駒を除去（Zobrist Hash自動更新）"""
+        existing = self.board.grid[x][y]
+        if existing is not None:
+            piece_id, player = existing[0], existing[1]
+            is_promoted = existing[2] if len(existing) > 2 else False
+            self.update_zobrist_piece(x, y, piece_id, player, is_promoted)
+            self.board.grid[x][y] = None
+
+    def get_piece(self, x: int, y: int) -> Optional[tuple[int, int]]:
+        """駒を取得（piece_id, player）またはNone"""
+        return self.board.get(x, y)
+
+    def get_piece_promoted(self, x: int, y: int) -> bool:
+        """駒が成っているかどうか"""
+        return self.board.get_promoted(x, y)
 
     def get_piece_positions(self, piece_id: int, player: Optional[int] = None) -> list[tuple[int, int]]:
         """指定した駒の位置リストを取得"""
@@ -69,7 +136,7 @@ class GameState:
         new_board = Board()
         new_board.grid = [row[:] for row in self.board.grid]
 
-        return GameState(
+        new_state = GameState(
             board=new_board,
             current_player=self.current_player,
             move_count=self.move_count,
@@ -81,6 +148,8 @@ class GameState:
             pending_shoot=copy.deepcopy(self.pending_shoot) if self.pending_shoot else None,
             multi_step_state=copy.deepcopy(self.multi_step_state) if self.multi_step_state else None,
         )
+        new_state._zobrist_hash = self._zobrist_hash
+        return new_state
 
 
 def create_initial_state() -> GameState:
@@ -119,5 +188,8 @@ def create_initial_state() -> GameState:
     place_row(row5, 14, 4)
     place_row(row6, 13, 5)
     place_row(row7, 12, 6)
+
+    # 初期盤面のZobrist Hashを計算
+    state.compute_zobrist_hash()
 
     return state

@@ -116,7 +116,7 @@ class GameEngine:
         player = self.current_player
         for x in range(19):
             for y in range(19):
-                piece_data = self.state.board.get(x, y)
+                piece_data = self.state.get_piece(x, y)
                 if piece_data and piece_data[1] == player:
                     # 合法手があるか確認
                     moves = movement.get_legal_moves(self.state, (x, y))
@@ -133,7 +133,7 @@ class GameEngine:
         if self.state.phase != GamePhase.PIECE_SELECT:
             return False
 
-        piece_data = self.state.board.get(pos[0], pos[1])
+        piece_data = self.state.get_piece(pos[0], pos[1])
         if piece_data is None:
             return False
 
@@ -196,7 +196,7 @@ class GameEngine:
         from_pos = self.state.selected_piece
 
         # 駒情報取得
-        piece_data = self.state.board.get(from_pos[0], from_pos[1])
+        piece_data = self.state.get_piece(from_pos[0], from_pos[1])
         piece_id, player = piece_data
         piece = get_piece(piece_id)
 
@@ -235,17 +235,17 @@ class GameEngine:
 
         # 経路上の敵駒を取る（経路取りがある駒の場合）
         path_kills = []
-        target = self.state.board.get(to_pos[0], to_pos[1])
+        target = self.state.get_piece(to_pos[0], to_pos[1])
         if target and target[1] != player:
             killed_id = target[0]
-            killed_was_promoted = self.state.board.get_promoted(to_pos[0], to_pos[1])
+            killed_was_promoted = self.state.get_piece_promoted(to_pos[0], to_pos[1])
             path_kills.append((to_pos, killed_id, killed_was_promoted))
-            self.state.board.remove(to_pos[0], to_pos[1])
+            self.state.remove_piece(to_pos[0], to_pos[1])
 
         # 駒を移動
-        already_promoted = self.state.board.get_promoted(from_pos[0], from_pos[1])
-        self.state.board.remove(from_pos[0], from_pos[1])
-        self.state.board.set(to_pos[0], to_pos[1], piece_id, player, is_promoted=already_promoted)
+        already_promoted = self.state.get_piece_promoted(from_pos[0], from_pos[1])
+        self.state.remove_piece(from_pos[0], from_pos[1])
+        self.state.set_piece(to_pos[0], to_pos[1], piece_id, player, is_promoted=already_promoted)
 
         # 棋譜に経路取りを記録
         if path_kills:
@@ -291,7 +291,7 @@ class GameEngine:
         if to_pos not in legal_moves:
             return MoveResult(success=False, error="そこには移動できません")
 
-        already_promoted = self.state.board.get_promoted(from_pos[0], from_pos[1])
+        already_promoted = self.state.get_piece_promoted(from_pos[0], from_pos[1])
 
         # 棋譜記録用のMoveを作成
         self._kifu_move = Move(
@@ -304,11 +304,11 @@ class GameEngine:
 
         # 取る駒を記録
         captured_piece = None
-        target = self.state.board.get(to_pos[0], to_pos[1])
+        target = self.state.get_piece(to_pos[0], to_pos[1])
         if target:
             captured_piece = target[0]
             self._kifu_move.captured_piece = captured_piece
-            self._kifu_move.captured_was_promoted = self.state.board.get_promoted(to_pos[0], to_pos[1])
+            self._kifu_move.captured_was_promoted = self.state.get_piece_promoted(to_pos[0], to_pos[1])
 
         # 移動実行
         move_result = movement.execute_move(self.state, from_pos, to_pos)
@@ -413,19 +413,19 @@ class GameEngine:
 
         # 経路上の敵駒を取る
         path_kills = []
-        target = self.state.board.get(to_pos[0], to_pos[1])
+        target = self.state.get_piece(to_pos[0], to_pos[1])
         if target and target[1] != player:
             killed_id = target[0]
-            killed_was_promoted = self.state.board.get_promoted(to_pos[0], to_pos[1])
+            killed_was_promoted = self.state.get_piece_promoted(to_pos[0], to_pos[1])
             path_kills.append((to_pos, killed_id, killed_was_promoted))
-            self.state.board.remove(to_pos[0], to_pos[1])
+            self.state.remove_piece(to_pos[0], to_pos[1])
             kifu_move.captured_piece = killed_id
             kifu_move.captured_pos = to_pos
             kifu_move.captured_was_promoted = killed_was_promoted
 
         # 駒を移動
-        self.state.board.remove(from_pos[0], from_pos[1])
-        self.state.board.set(to_pos[0], to_pos[1], piece_id, player,
+        self.state.remove_piece(from_pos[0], from_pos[1])
+        self.state.set_piece(to_pos[0], to_pos[1], piece_id, player,
                              is_promoted=ms_state["already_promoted"])
 
         # 棋譜を記録
@@ -487,8 +487,8 @@ class GameEngine:
         player = self.current_player
 
         # 駒を元の位置に戻す
-        self.state.board.remove(current_pos[0], current_pos[1])
-        self.state.board.set(original_pos[0], original_pos[1], piece_id, player,
+        self.state.remove_piece(current_pos[0], current_pos[1])
+        self.state.set_piece(original_pos[0], original_pos[1], piece_id, player,
                              is_promoted=ms_state["already_promoted"])
 
         # 棋譜からステップを削除し、取った駒を復元
@@ -498,7 +498,7 @@ class GameEngine:
             # 各stepで取った駒を復元
             if step_move and step_move.captured_piece is not None:
                 cap_pos = step_move.to_pos  # stepでは移動先に取った駒がいた
-                self.state.board.set(
+                self.state.set_piece(
                     cap_pos[0], cap_pos[1],
                     step_move.captured_piece, 1 - player,
                     is_promoted=step_move.captured_was_promoted
@@ -570,11 +570,11 @@ class GameEngine:
 
     def can_promote_at(self, from_pos: tuple[int, int], to_pos: tuple[int, int]) -> bool:
         """指定の移動で成れるか判定"""
-        piece_data = self.state.board.get(from_pos[0], from_pos[1])
+        piece_data = self.state.get_piece(from_pos[0], from_pos[1])
         if piece_data is None:
             return False
         piece_id, player = piece_data
-        target = self.state.board.get(to_pos[0], to_pos[1])
+        target = self.state.get_piece(to_pos[0], to_pos[1])
         captured_piece = target[0] if target else None
         return promotion.can_promote(self.state, from_pos, to_pos, captured_piece, player)
 
@@ -868,10 +868,10 @@ class GameEngine:
 
         # 成った場合は元に戻す
         if last_move.promoted:
-            piece_data = self.state.board.get(pos[0], pos[1])
+            piece_data = self.state.get_piece(pos[0], pos[1])
             if piece_data:
                 # 成り前の駒IDに戻す
-                self.state.board.set(pos[0], pos[1], piece_id, piece_data[1], is_promoted=False)
+                self.state.set_piece(pos[0], pos[1], piece_id, piece_data[1], is_promoted=False)
 
         # 棋譜のmoveエントリを復元して_kifu_moveにセット
         # （直前のエントリは移動のはず）
@@ -885,19 +885,19 @@ class GameEngine:
         """共通の副作用を元に戻す"""
         # 成り戻しを元に戻す
         for pos, old_id, new_id in reversed(last_move.demotions):
-            piece_data = self.state.board.get(pos[0], pos[1])
+            piece_data = self.state.get_piece(pos[0], pos[1])
             if piece_data:
-                self.state.board.set(pos[0], pos[1], old_id, piece_data[1])
+                self.state.set_piece(pos[0], pos[1], old_id, piece_data[1])
 
         # 連鎖成りを元に戻す
         for pos, old_id, new_id in reversed(last_move.chain_promotions):
-            piece_data = self.state.board.get(pos[0], pos[1])
+            piece_data = self.state.get_piece(pos[0], pos[1])
             if piece_data:
-                self.state.board.set(pos[0], pos[1], old_id, piece_data[1])
+                self.state.set_piece(pos[0], pos[1], old_id, piece_data[1])
 
         # 道連れを元に戻す
         for pos, piece_id, killed_is_promoted in last_move.collateral_kills:
-            self.state.board.set(pos[0], pos[1], piece_id, 1 - last_move.player, is_promoted=killed_is_promoted)
+            self.state.set_piece(pos[0], pos[1], piece_id, 1 - last_move.player, is_promoted=killed_is_promoted)
 
     def _undo_move(self, last_move: Move) -> None:
         """通常移動のundo"""
@@ -920,20 +920,21 @@ class GameEngine:
             piece_id = original_id
             was_promoted_before = False
         else:
-            was_promoted_before = self.state.board.get_promoted(to_pos[0], to_pos[1])
+            was_promoted_before = self.state.get_piece_promoted(to_pos[0], to_pos[1])
 
         # 駒を元の位置に戻す
-        self.state.board.remove(to_pos[0], to_pos[1])
-        self.state.board.set(from_pos[0], from_pos[1], piece_id, last_move.player, is_promoted=was_promoted_before)
+        self.state.remove_piece(to_pos[0], to_pos[1])
+        self.state.set_piece(from_pos[0], from_pos[1], piece_id, last_move.player, is_promoted=was_promoted_before)
 
         # 取った駒を復元
         if last_move.captured_piece is not None:
-            self.state.board.set(
+            self.state.set_piece(
                 to_pos[0], to_pos[1], last_move.captured_piece, 1 - last_move.player,
                 is_promoted=last_move.captured_was_promoted
             )
 
-        # 手番を戻す
+        # 手番を戻す（Zobrist Hashも更新）
+        self.state.update_zobrist_turn()
         self.state.current_player = last_move.player
         self.state.move_count -= 1
         self.state.winner = None
@@ -950,13 +951,13 @@ class GameEngine:
         player = last_move.player
 
         # 駒を元の位置に戻す
-        already_promoted = self.state.board.get_promoted(to_pos[0], to_pos[1])
-        self.state.board.remove(to_pos[0], to_pos[1])
-        self.state.board.set(from_pos[0], from_pos[1], piece_id, player, is_promoted=already_promoted)
+        already_promoted = self.state.get_piece_promoted(to_pos[0], to_pos[1])
+        self.state.remove_piece(to_pos[0], to_pos[1])
+        self.state.set_piece(from_pos[0], from_pos[1], piece_id, player, is_promoted=already_promoted)
 
         # 取った駒を復元
         if last_move.captured_piece is not None:
-            self.state.board.set(
+            self.state.set_piece(
                 to_pos[0], to_pos[1], last_move.captured_piece, 1 - player,
                 is_promoted=last_move.captured_was_promoted
             )
@@ -994,7 +995,8 @@ class GameEngine:
                 "can_stop_early": True,
             }
 
-        # 手番を戻す（stopはターン終了を伴う）
+        # 手番を戻す（stopはターン終了を伴う、Zobrist Hashも更新）
+        self.state.update_zobrist_turn()
         self.state.current_player = last_move.player
         self.state.move_count -= 1
         self.state.winner = None
@@ -1005,7 +1007,7 @@ class GameEngine:
         """射撃のundo"""
         # 取った駒を復元
         if last_move.captured_piece is not None and last_move.captured_pos is not None:
-            self.state.board.set(
+            self.state.set_piece(
                 last_move.captured_pos[0], last_move.captured_pos[1],
                 last_move.captured_piece, 1 - last_move.player,
                 is_promoted=last_move.captured_was_promoted

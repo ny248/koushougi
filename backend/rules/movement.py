@@ -17,7 +17,7 @@ def get_legal_moves(state: GameState, pos: tuple[int, int]) -> list[tuple[int, i
         合法手のリスト [(x, y), ...]
     """
     x, y = pos
-    piece_data = state.board.get(x, y)
+    piece_data = state.get_piece(x, y)
     if piece_data is None:
         return []
 
@@ -49,7 +49,7 @@ def _can_capture_at(state: GameState, piece_id: int, player: int, to_pos: tuple[
     Returns:
         移動可能ならTrue
     """
-    target = state.board.get(to_pos[0], to_pos[1])
+    target = state.get_piece(to_pos[0], to_pos[1])
     if target is None:
         return True  # 空きマスには移動可能
 
@@ -103,32 +103,32 @@ def execute_move(state: GameState, from_pos: tuple[int, int],
     fx, fy = from_pos
     tx, ty = to_pos
 
-    piece_data = state.board.get(fx, fy)
+    piece_data = state.get_piece(fx, fy)
     if piece_data is None:
         raise ValueError(f"No piece at {from_pos}")
 
     piece_id, player = piece_data
-    is_promoted = state.board.get_promoted(fx, fy)  # 成り状態を記録
+    is_promoted = state.get_piece_promoted(fx, fy)  # 成り状態を記録
     piece = get_piece(piece_id)
 
     # 経路上の敵を取る（霹靂、招揺用）
     path_kills = piece.get_path_kills(from_pos, state.board, player, to_pos)
     for kill_pos in path_kills:
-        killed_piece = state.board.get(kill_pos[0], kill_pos[1])
+        killed_piece = state.get_piece(kill_pos[0], kill_pos[1])
         if killed_piece:
-            killed_is_promoted = state.board.get_promoted(kill_pos[0], kill_pos[1])
-            state.board.remove(kill_pos[0], kill_pos[1])
+            killed_is_promoted = state.get_piece_promoted(kill_pos[0], kill_pos[1])
+            state.remove_piece(kill_pos[0], kill_pos[1])
             result["path_kills"].append((kill_pos, killed_piece[0], killed_is_promoted))
 
     # 移動先の敵を取る
-    target = state.board.get(tx, ty)
+    target = state.get_piece(tx, ty)
     if target is not None:
         target_id, _ = target
         result["captured"] = target_id
 
     # 駒を移動（成り状態を引き継ぐ）
-    state.board.remove(fx, fy)
-    state.board.set(tx, ty, piece_id, player, is_promoted=is_promoted)
+    state.remove_piece(fx, fy)
+    state.set_piece(tx, ty, piece_id, player, is_promoted=is_promoted)
 
     # 移動後効果（射撃、毒火など）
     after_effect = piece.after_move(state, from_pos, to_pos, player)
@@ -153,13 +153,13 @@ def _execute_kills(state: GameState, targets: list[tuple[int, int]],
     """
     killed = []
     for target_pos in targets:
-        piece = state.board.get(target_pos[0], target_pos[1])
+        piece = state.get_piece(target_pos[0], target_pos[1])
         if piece is None:
             continue
         if enemy_only and piece[1] == player:
             continue  # 敵のみモードで味方はスキップ
-        is_promoted = state.board.get_promoted(target_pos[0], target_pos[1])
-        state.board.remove(target_pos[0], target_pos[1])
+        is_promoted = state.get_piece_promoted(target_pos[0], target_pos[1])
+        state.remove_piece(target_pos[0], target_pos[1])
         killed.append((target_pos, piece[0], is_promoted))
     return killed
 
@@ -203,7 +203,7 @@ def check_revert_all(state: GameState) -> list[tuple[tuple[int, int], int, int]]
     reverts = []
     for x in range(19):
         for y in range(19):
-            piece_data = state.board.get(x, y)
+            piece_data = state.get_piece(x, y)
             if piece_data is None:
                 continue
 
@@ -216,7 +216,8 @@ def check_revert_all(state: GameState) -> list[tuple[tuple[int, int], int, int]]
 
     # 成り戻り実行
     for pos, old_id, new_id in reverts:
-        state.board.set(pos[0], pos[1], new_id, state.board.get(pos[0], pos[1])[1])
+        piece_data = state.get_piece(pos[0], pos[1])
+        state.set_piece(pos[0], pos[1], new_id, piece_data[1])
 
     return reverts
 
