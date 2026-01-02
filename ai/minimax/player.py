@@ -1,4 +1,4 @@
-"""Minimax AI（undo方式）"""
+"""Minimax AI（undo方式 + 反復深化）"""
 
 import random
 import logging
@@ -23,19 +23,22 @@ class MinimaxPlayer(BaseAI):
     設計原則:
     - 探索開始時に1回だけstate.copy()
     - 探索中はapply_action→再帰→undoで状態を戻す
-    - コピーのオーバーヘッドを最小化
+    - 反復深化で浅い深さから順に探索し、ムーブオーダリングを改善
     """
 
-    def __init__(self, depth: int = 8, max_moves: int = 50, epsilon: float = 0.0):
+    def __init__(self, depth: int = 8, max_moves: int = 50, epsilon: float = 0.0,
+                 use_iterative_deepening: bool = True):
         """
         Args:
             depth: 探索の深さ（状態遷移の回数）
             max_moves: 各ノードで探索する最大手数（未使用、将来用）
             epsilon: ランダムに手を選ぶ確率
+            use_iterative_deepening: 反復深化を使うか
         """
         self.depth = depth
         self.max_moves = max_moves
         self.epsilon = epsilon
+        self.use_iterative_deepening = use_iterative_deepening
 
     def choose_action(self, state: GameState) -> Action:
         """現在の状態から次のアクションを選択"""
@@ -85,6 +88,7 @@ class MinimaxPlayer(BaseAI):
         """現在の状態で最善のアクションを探索
 
         探索開始時に1回だけコピーし、以降はundo方式で探索。
+        反復深化を使用する場合は浅い深さから順に探索。
         """
         # 探索用に1回だけコピー
         search_state = state.copy()
@@ -95,26 +99,59 @@ class MinimaxPlayer(BaseAI):
             return None
 
         player = search_state.current_player
+
+        if self.use_iterative_deepening:
+            return self._iterative_deepening_search(search_engine, actions, player)
+        else:
+            return self._fixed_depth_search(search_engine, actions, player, self.depth)
+
+    def _iterative_deepening_search(self, engine: GameEngine, actions: list[Action],
+                                     player: int) -> Optional[Action]:
+        """反復深化探索
+
+        深さ1から始めて徐々に深くし、前回の結果でムーブオーダリングを改善。
+        """
+        best_action = None
+        ordered_actions = actions  # 最初は元の順序
+
+        for current_depth in range(1, self.depth + 1):
+            # 前回の最善手を先頭に持ってくる
+            if best_action is not None:
+                ordered_actions = [best_action] + [a for a in ordered_actions if a != best_action]
+
+            result = self._search_at_depth(engine, ordered_actions, player, current_depth)
+            if result is not None:
+                best_action = result
+                # 次の反復のために、この深さでの評価順に並べ替え
+                ordered_actions = self._order_actions(engine, actions, player, maximizing=True)
+
+        return best_action
+
+    def _fixed_depth_search(self, engine: GameEngine, actions: list[Action],
+                            player: int, depth: int) -> Optional[Action]:
+        """固定深さ探索（反復深化を使わない場合）"""
+        # ムーブオーダリング
+        actions = self._order_actions(engine, actions, player, maximizing=True)
+        return self._search_at_depth(engine, actions, player, depth)
+
+    def _search_at_depth(self, engine: GameEngine, actions: list[Action],
+                         player: int, depth: int) -> Optional[Action]:
+        """指定深さで探索を実行"""
         best_actions = []
         best_value = float('-inf')
         alpha = float('-inf')
         beta = float('inf')
 
-        # ムーブオーダリング
-        actions = self._order_actions(search_engine, actions, player, maximizing=True)
-
         for action in actions:
-            # アクションを適用
-            result = search_engine.apply_action(action)
+            result = engine.apply_action(action)
             if not result.success:
                 continue
 
-            # Alpha-Beta探索（プレイヤーが変わったかでmaximizingを決定）
-            next_maximizing = search_state.current_player == player
-            value = self._alphabeta(search_engine, self.depth - 1, alpha, beta, next_maximizing, player)
+            # Alpha-Beta探索
+            next_maximizing = engine.state.current_player == player
+            value = self._alphabeta(engine, depth - 1, alpha, beta, next_maximizing, player)
 
-            # undoで状態を戻す
-            search_engine.undo()
+            engine.undo()
 
             if value > best_value:
                 best_value = value
@@ -122,7 +159,6 @@ class MinimaxPlayer(BaseAI):
             elif value == best_value:
                 best_actions.append(action)
 
-            # alphaを更新（ルートノードはmaximizing）
             alpha = max(alpha, value)
 
         return random.choice(best_actions) if best_actions else None
