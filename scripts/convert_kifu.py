@@ -27,14 +27,25 @@ from backend.domain.game_state import create_initial_state
 from backend.domain.kifu import Kifu
 
 
+BATCH_SIZE = 5000  # バッチ処理のサイズ
+
+
 def convert_kifu_file(input_path: Path, output_path: Path, logger) -> dict:
-    """棋譜ファイルを経験データに変換
+    """棋譜ファイルを経験データに変換（メモリ効率化版）
 
     Returns:
         統計情報
     """
-    # フェーズ別のリスト
-    experiences = {
+    # フェーズ別のバッファ（バッチ処理用）
+    buffers = {
+        "piece": {"states": [], "actions": [], "rewards": []},
+        "dest": {"states": [], "actions": [], "rewards": []},
+        "promo": {"states": [], "actions": [], "rewards": []},
+        "shoot": {"states": [], "actions": [], "rewards": []},
+    }
+
+    # バッチ処理済みテンソルのリスト
+    batches = {
         "piece": {"states": [], "actions": [], "rewards": []},
         "dest": {"states": [], "actions": [], "rewards": []},
         "promo": {"states": [], "actions": [], "rewards": []},
@@ -42,6 +53,18 @@ def convert_kifu_file(input_path: Path, output_path: Path, logger) -> dict:
     }
 
     stats = {"games": 0, "experiences": 0, "errors": 0}
+
+    def flush_buffers():
+        """バッファをテンソルに変換してバッチリストに追加"""
+        for phase in buffers:
+            if buffers[phase]["states"]:
+                batches[phase]["states"].append(torch.stack(buffers[phase]["states"]))
+                batches[phase]["actions"].append(torch.tensor(buffers[phase]["actions"], dtype=torch.long))
+                batches[phase]["rewards"].append(torch.tensor(buffers[phase]["rewards"], dtype=torch.float32))
+                # バッファをクリア
+                buffers[phase]["states"] = []
+                buffers[phase]["actions"] = []
+                buffers[phase]["rewards"] = []
 
     with open(input_path) as f:
         for line_no, line in enumerate(f, 1):
@@ -56,27 +79,33 @@ def convert_kifu_file(input_path: Path, output_path: Path, logger) -> dict:
                 # フェーズ別に追加
                 for phase, exps in game_exps.items():
                     for exp in exps:
-                        experiences[phase]["states"].append(exp["state"])
-                        experiences[phase]["actions"].append(exp["action"])
-                        experiences[phase]["rewards"].append(exp["reward"])
+                        buffers[phase]["states"].append(exp["state"])
+                        buffers[phase]["actions"].append(exp["action"])
+                        buffers[phase]["rewards"].append(exp["reward"])
                         stats["experiences"] += 1
 
                 stats["games"] += 1
 
-                if stats["games"] % 50 == 0:
+                # バッファがBATCH_SIZEを超えたらフラッシュ
+                total_buffered = sum(len(buffers[p]["states"]) for p in buffers)
+                if total_buffered >= BATCH_SIZE:
+                    flush_buffers()
                     logger.info(f"処理中: {stats['games']}ゲーム, {stats['experiences']}経験")
 
             except Exception as e:
                 stats["errors"] += 1
                 logger.warning(f"行{line_no}でエラー: {e}")
 
-    # テンソルに変換して保存
+    # 残りのバッファをフラッシュ
+    flush_buffers()
+
+    # バッチを結合して保存
     output_data = {}
-    for phase in experiences:
-        if experiences[phase]["states"]:
-            output_data[f"{phase}_states"] = torch.stack(experiences[phase]["states"])
-            output_data[f"{phase}_actions"] = torch.tensor(experiences[phase]["actions"], dtype=torch.long)
-            output_data[f"{phase}_rewards"] = torch.tensor(experiences[phase]["rewards"], dtype=torch.float32)
+    for phase in batches:
+        if batches[phase]["states"]:
+            output_data[f"{phase}_states"] = torch.cat(batches[phase]["states"], dim=0)
+            output_data[f"{phase}_actions"] = torch.cat(batches[phase]["actions"], dim=0)
+            output_data[f"{phase}_rewards"] = torch.cat(batches[phase]["rewards"], dim=0)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(output_data, output_path)

@@ -15,6 +15,10 @@ def get_legal_moves(state: GameState, pos: tuple[int, int]) -> list[tuple[int, i
 
     Returns:
         合法手のリスト [(x, y), ...]
+
+    Note:
+        マルチステップ駒の場合、1歩目の選択肢を返す（最終到達点ではない）。
+        これはselect_destinationでget_next_step_optionsと整合性を取るため。
     """
     x, y = pos
     piece_data = state.get_piece(x, y)
@@ -26,7 +30,12 @@ def get_legal_moves(state: GameState, pos: tuple[int, int]) -> list[tuple[int, i
         return []  # 自分の駒でない
 
     piece = get_piece(piece_id)
-    moves = piece.get_moves(pos, state.board, player)
+
+    # マルチステップ駒の場合は1歩目の選択肢を返す
+    if piece.is_multi_step():
+        moves = piece.get_next_step_options(pos, state.board, player, 0, None)
+    else:
+        moves = piece.get_moves(pos, state.board, player)
 
     # 駒取り制限を適用
     filtered_moves = []

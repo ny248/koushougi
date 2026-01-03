@@ -805,6 +805,17 @@ class GameEngine:
 
         # ターン終了
         movement.end_turn(self.state)
+
+        # 局面を記録し、千日手判定
+        self.state.record_position()
+        if self.state.is_sennichite():
+            # 千日手は引き分け (winner=None, phase=GAME_OVER)
+            self.state.kifu.winner = None
+            self.state.kifu.win_reason = "sennichite"
+            self.state.phase = GamePhase.GAME_OVER
+            logger.debug(f"_finalize_turn: 千日手により引き分け")
+            return result
+
         self.state.phase = GamePhase.PIECE_SELECT
         self._pending_move_result = None
 

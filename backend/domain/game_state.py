@@ -43,6 +43,9 @@ class GameState:
     # Zobrist Hash（盤面+手番の識別子、千日手判定・Transposition Table用）
     _zobrist_hash: int = 0
 
+    # 千日手判定用の局面履歴（Zobrist Hash → 出現回数）
+    position_history: dict = field(default_factory=dict)
+
     @property
     def zobrist_hash(self) -> int:
         """現在のZobrist Hash値を取得"""
@@ -73,6 +76,16 @@ class GameState:
         self.update_zobrist_turn()
         self.current_player = 1 - self.current_player
         self.move_count += 1
+
+    def record_position(self) -> None:
+        """現在の局面を履歴に記録"""
+        h = self._zobrist_hash
+        self.position_history[h] = self.position_history.get(h, 0) + 1
+
+    def is_sennichite(self) -> bool:
+        """千日手（同一局面が3回以上）かどうか判定"""
+        h = self._zobrist_hash
+        return self.position_history.get(h, 0) >= 3
 
     def is_game_over(self) -> bool:
         """ゲームが終了しているか"""
@@ -149,6 +162,7 @@ class GameState:
             multi_step_state=copy.deepcopy(self.multi_step_state) if self.multi_step_state else None,
         )
         new_state._zobrist_hash = self._zobrist_hash
+        new_state.position_history = dict(self.position_history)
         return new_state
 
 
@@ -191,5 +205,8 @@ def create_initial_state() -> GameState:
 
     # 初期盤面のZobrist Hashを計算
     state.compute_zobrist_hash()
+
+    # 初期局面を履歴に記録
+    state.record_position()
 
     return state

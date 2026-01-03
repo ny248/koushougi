@@ -47,6 +47,7 @@ class PhaseContext:
         all_game_files: Optional[List[Path]] = None,
         variables: Optional[dict] = None,
         save_callback: Optional[Callable[[], None]] = None,
+        completed_phases: Optional[List[str]] = None,
     ):
         self.output_dir = output_dir
         self.logger = logger
@@ -56,6 +57,7 @@ class PhaseContext:
         self.all_game_files = all_game_files or []
         self.variables = variables or {}
         self._save_callback = save_callback
+        self.completed_phases = set(completed_phases or [])
 
         # フェーズ内進捗
         self.current_phase_name: Optional[str] = None
@@ -82,6 +84,16 @@ class PhaseContext:
         self.current_phase_type = None
         self.current_phase_completed = 0
         self.current_phase_total = 0
+
+    def mark_phase_completed(self, phase_name: str):
+        """フェーズを完了済みとしてマーク"""
+        self.completed_phases.add(phase_name)
+        if self._save_callback:
+            self._save_callback()
+
+    def is_phase_completed(self, phase_name: str) -> bool:
+        """フェーズが完了済みかどうか"""
+        return phase_name in self.completed_phases
 
     def register_games(self, path: Path):
         """棋譜ファイルを登録"""
@@ -164,7 +176,7 @@ def from_phase(phase_name: str) -> Callable[[PhaseContext], List[Path]]:
     """指定フェーズの棋譜を返すファクトリ"""
 
     def factory(ctx: PhaseContext) -> List[Path]:
-        path = ctx.output_dir / phase_name / "games.jsonl"
+        path = ctx.output_dir / f"{phase_name}.jsonl"
         return [path] if path.exists() else []
 
     return factory
@@ -222,9 +234,7 @@ class GeneratePhase(Phase):
         from scripts.battle import run_games
 
         phase_name = self.get_name(ctx)
-        output_dir = ctx.output_dir / phase_name
-        output_dir.mkdir(parents=True, exist_ok=True)
-        games_file = output_dir / "games.jsonl"
+        games_file = ctx.output_dir / f"{phase_name}.jsonl"
 
         # フェーズ内進捗の開始位置を決定
         start_from = 0
@@ -264,7 +274,6 @@ class GeneratePhase(Phase):
 
         return PhaseResult(
             success=success,
-            output_dir=output_dir,
             games_file=games_file if success else None,
         )
 
@@ -294,26 +303,29 @@ class TrainPhase(Phase):
             ctx.logger.error("データが見つかりません")
             return PhaseResult(success=False)
 
-        # JSONL を torch 形式に変換
-        converted_path = output_dir / "experiences.pt"
-        if not converted_path.exists():
-            ctx.logger.info("棋譜データを学習用形式に変換中...")
-            for jsonl_path in data_paths:
+        # JSONL を torch 形式に変換（各ファイルを個別に変換）
+        converted_paths = []
+        for jsonl_path in data_paths:
+            # bootstrap.jsonl → bootstrap.pt
+            pt_path = jsonl_path.with_suffix(".pt")
+            if not pt_path.exists():
+                ctx.logger.info(f"変換中: {jsonl_path.name} → {pt_path.name}")
                 convert_cmd = [
                     "python",
                     "scripts/convert_kifu.py",
                     "--input",
                     str(jsonl_path),
                     "--output",
-                    str(converted_path),
+                    str(pt_path),
                 ]
                 result = subprocess.run(convert_cmd, capture_output=True, text=True)
                 if result.returncode != 0:
                     ctx.logger.error(f"変換エラー: {result.stderr}")
                     return PhaseResult(success=False)
-            ctx.logger.info("変換完了")
+            converted_paths.append(pt_path)
 
-        data_arg = str(converted_path)
+        # 複数の .pt ファイルをカンマ区切りで渡す
+        data_arg = ",".join(str(p) for p in converted_paths)
 
         cmd = [
             "python",
@@ -513,18 +525,30 @@ class LoopPhase(Phase):
     def execute(self, ctx: PhaseContext) -> PhaseResult:
         ctx.logger.info(f"ループ開始: 最大 {self.max_iterations} イテレーション")
 
-        for i in range(self.max_iterations):
+        # 開始イテレーションを決定（ctx.variablesから復元）
+        start_iteration = ctx.variables.get("iteration", 0)
+
+        for i in range(start_iteration, self.max_iterations):
             ctx.variables["iteration"] = i
             ctx.logger.info(f"=== イテレーション {i + 1}/{self.max_iterations} ===")
 
             for phase in self.phases:
                 phase_name = phase.get_name(ctx)
+
+                # 完了済みフェーズはスキップ（コンテキストから参照）
+                if ctx.is_phase_completed(phase_name):
+                    ctx.logger.info(f"スキップ: {phase_name}")
+                    continue
+
                 ctx.logger.info(f"--- フェーズ: {phase_name} ---")
 
                 result = phase.execute(ctx)
 
                 if not result.success:
                     return result
+
+                # 完了フェーズを記録（コンテキストに保存）
+                ctx.mark_phase_completed(phase_name)
 
             if self.break_condition and self.break_condition(ctx, i):
                 ctx.logger.info("終了条件を満たしました")

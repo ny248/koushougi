@@ -71,6 +71,7 @@ def create_context(
         all_game_files=[Path(f) for f in progress.all_game_files],
         variables=dict(progress.variables),
         save_callback=save_callback,
+        completed_phases=list(progress.completed_phases),
     )
 
     # フェーズ内進捗を復元
@@ -92,6 +93,7 @@ def sync_progress(ctx: PhaseContext, progress: TrainingProgress):
     progress.best_win_rate = ctx.best_win_rate
     progress.all_game_files = [str(f) for f in ctx.all_game_files]
     progress.variables = dict(ctx.variables)
+    progress.completed_phases = list(ctx.completed_phases)
 
     # フェーズ内進捗を同期
     if ctx.current_phase_name:
@@ -149,12 +151,11 @@ def run_plan(
         save_progress(progress, progress_path)
 
     ctx = create_context(output_dir, progress, logger, save_callback=save_callback)
-    completed = set(progress.completed_phases)
 
     for phase in phases:
         phase_name = phase.get_name(ctx)
 
-        if phase_name in completed:
+        if ctx.is_phase_completed(phase_name):
             logger.info(f"スキップ: {phase_name}")
             continue
 
@@ -169,8 +170,7 @@ def run_plan(
             return False
 
         # 進捗更新
-        completed.add(phase_name)
-        progress.completed_phases = list(completed)
+        ctx.mark_phase_completed(phase_name)
         sync_progress(ctx, progress)
         save_progress(progress, progress_path)
         logger.info(f"完了: {phase_name}")

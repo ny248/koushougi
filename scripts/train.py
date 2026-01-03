@@ -33,6 +33,48 @@ from scripts.lib.logger import setup_logger
 from ai.neural.model import create_model
 
 
+def _load_experience_data(data_arg: str, logger) -> dict:
+    """経験データを読み込む（複数ファイル対応）
+
+    Args:
+        data_arg: ファイルパス（カンマ区切りで複数可）
+        logger: ロガー
+
+    Returns:
+        フェーズ別のデータ辞書
+    """
+    # 複数ファイルをカンマで分割
+    file_paths = [p.strip() for p in data_arg.split(",")]
+    logger.info(f"データファイル: {len(file_paths)}件")
+
+    # フェーズ別にデータを結合
+    phase_data = {phase: None for phase in ["piece", "dest", "promo", "shoot", "step"]}
+    phase_lists = {phase: {"states": [], "actions": [], "rewards": []} for phase in phase_data}
+
+    for file_path in file_paths:
+        data = torch.load(file_path)
+        logger.info(f"  読み込み: {file_path}")
+
+        for phase in phase_data:
+            key = f"{phase}_states"
+            if key in data:
+                phase_lists[phase]["states"].append(data[f"{phase}_states"])
+                phase_lists[phase]["actions"].append(data[f"{phase}_actions"])
+                phase_lists[phase]["rewards"].append(data[f"{phase}_rewards"])
+
+    # 結合
+    for phase in phase_data:
+        if phase_lists[phase]["states"]:
+            phase_data[phase] = {
+                "states": torch.cat(phase_lists[phase]["states"], dim=0),
+                "actions": torch.cat(phase_lists[phase]["actions"], dim=0),
+                "rewards": torch.cat(phase_lists[phase]["rewards"], dim=0),
+            }
+            logger.info(f"  {phase}: {len(phase_data[phase]['states'])}")
+
+    return phase_data
+
+
 def train_supervised(args, logger):
     """教師あり学習（経験データから）"""
     logger.info("=== 教師あり学習 ===")
@@ -58,23 +100,8 @@ def train_supervised(args, logger):
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         logger.info(f"モデル読み込み: {args.load}")
 
-    # 経験データ読み込み
-    data = torch.load(args.data)
-    logger.info("経験データ読み込み完了")
-
-    # フェーズ別のデータ
-    phase_data = {}
-    for phase in ["piece", "dest", "promo", "shoot", "step"]:
-        key = f"{phase}_states"
-        if key in data:
-            phase_data[phase] = {
-                "states": data[f"{phase}_states"],
-                "actions": data[f"{phase}_actions"],
-                "rewards": data[f"{phase}_rewards"],
-            }
-            logger.info(f"  {phase}: {len(data[key])}")
-        else:
-            phase_data[phase] = None
+    # 経験データ読み込み（複数ファイル対応）
+    phase_data = _load_experience_data(args.data, logger)
 
     # 学習ループ
     best_loss = float("inf")
@@ -178,28 +205,14 @@ def train_reinforce(args, logger):
 
     logger.info(f"パラメータ数: {sum(p.numel() for p in model.parameters()):,}")
 
-    # 経験データ読み込み
-    data = torch.load(args.data)
-    logger.info("経験データ読み込み完了")
-
-    # フェーズ別のデータとベースライン計算
-    phase_data = {}
-    all_rewards = []
-
-    for phase in ["piece", "dest", "promo", "shoot", "step"]:
-        key = f"{phase}_states"
-        if key in data:
-            phase_data[phase] = {
-                "states": data[f"{phase}_states"],
-                "actions": data[f"{phase}_actions"],
-                "rewards": data[f"{phase}_rewards"],
-            }
-            all_rewards.append(data[f"{phase}_rewards"])
-            logger.info(f"  {phase}: {len(data[key])}")
-        else:
-            phase_data[phase] = None
+    # 経験データ読み込み（複数ファイル対応）
+    phase_data = _load_experience_data(args.data, logger)
 
     # ベースライン（全報酬の平均）
+    all_rewards = []
+    for phase in ["piece", "dest", "promo", "shoot", "step"]:
+        if phase_data[phase] is not None:
+            all_rewards.append(phase_data[phase]["rewards"])
     if all_rewards:
         baseline = torch.cat(all_rewards).mean().item()
     else:
@@ -334,22 +347,8 @@ def train_td(args, logger):
 
     logger.info(f"パラメータ数: {sum(p.numel() for p in model.parameters()):,}")
 
-    # 経験データ読み込み
-    data = torch.load(args.data)
-    logger.info("経験データ読み込み完了")
-
-    # フェーズ別のデータ
-    phase_data = {}
-    for phase in ["piece", "dest", "promo", "shoot", "step"]:
-        key = f"{phase}_states"
-        if key in data:
-            phase_data[phase] = {
-                "states": data[f"{phase}_states"],
-                "rewards": data[f"{phase}_rewards"],
-            }
-            logger.info(f"  {phase}: {len(data[key])}")
-        else:
-            phase_data[phase] = None
+    # 経験データ読み込み（複数ファイル対応）
+    phase_data = _load_experience_data(args.data, logger)
 
     gamma = args.gamma
     logger.info(f"γ (割引率): {gamma}")

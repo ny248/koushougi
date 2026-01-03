@@ -50,6 +50,10 @@ class NeuralPlayer(BaseAI):
             return SelectDestinationAction(pos=pos)
 
         elif phase == GamePhase.MULTI_STEP_MOVE:
+            # 次のステップの選択肢がない場合、停止を強制
+            options = engine.get_next_step_options()
+            if not options:
+                return StopMoveAction()
             if engine.can_stop_now() and self.choose_stop(engine):
                 return StopMoveAction()
             pos = self.choose_next_step(engine)
@@ -73,6 +77,19 @@ class NeuralPlayer(BaseAI):
         movable = engine.get_movable_pieces()
         if not movable:
             return (0, 0)
+
+        # 実際に移動先がある駒だけをフィルタ
+        # (get_movable_piecesは移動先がない駒も返すことがある)
+        valid_movable = []
+        from backend.rules import movement
+        for pos in movable:
+            dests = movement.get_legal_moves(engine.state, pos)
+            if dests:
+                valid_movable.append(pos)
+
+        if not valid_movable:
+            return movable[0]  # フォールバック
+        movable = valid_movable
 
         # ε確率でランダム
         if random.random() < self.epsilon:
@@ -101,6 +118,11 @@ class NeuralPlayer(BaseAI):
         """移動先を選択"""
         dests = engine.get_legal_destinations()
         if not dests:
+            # デバッグ: なぜ合法手がないか
+            import sys
+            print(f"[DEBUG] choose_destination: no dests, phase={engine.phase}, selected_piece={engine.selected_piece}", file=sys.stderr)
+            # 合法手がない - 駒選択をキャンセルして (0,0) を返す
+            # (battle.py 側でエラーハンドリングされる)
             return (0, 0)
 
         # ε確率でランダム
@@ -199,7 +221,7 @@ class NeuralPlayer(BaseAI):
             return random.choice(options)
 
         # マルチステップ状態を取得
-        multi_step_state = engine._multi_step_state
+        multi_step_state = engine.get_multi_step_state()
 
         # 盤面をエンコード（マルチステップ状態を含める）
         board_tensor = encode_board(engine, multi_step_state=multi_step_state).unsqueeze(0).to(self.device)
@@ -230,7 +252,7 @@ class NeuralPlayer(BaseAI):
             return random.choice([True, False])
 
         # マルチステップ状態を取得
-        multi_step_state = engine._multi_step_state
+        multi_step_state = engine.get_multi_step_state()
         options = engine.get_next_step_options()
 
         # 盤面をエンコード

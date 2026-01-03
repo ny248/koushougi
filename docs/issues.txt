@@ -1,2 +1,4 @@
-- AIのMiniMaxに時間がかかりすぎる。
+- play_step failed at phase GamePhase.PROMOTION
+- GameEngineの実装が冗長
+- 訓練時、先手と後手はランダムにすべき
 - selectをしてから別のコマをselectした場合、一回めのselectは記録されるべきではない。
