@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>広将棋</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f4efe6; color: #28231d; font: 16px system-ui, sans-serif; }
+  main { width: min(100%, 80rem); margin: auto; padding: 1.5rem; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+  h1 { margin: 0; font: bold 2rem serif; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 19rem;
+    gap: 1rem; align-items: start; margin-top: 1rem; }
+  .panel { background: #fffaf0; border: 1px solid #d9ccb8; border-radius: 8px; padding: 1rem; }
+  .panel h2 { margin: 1rem 0 .5rem; font-size: 1rem; }
+  .panel p { margin: .25rem 0 .75rem; }
+  #recent { max-height: 22rem; overflow: auto; }
+  #recent li { padding: .35rem 0; border-bottom: 1px solid #eee4d6; }
+  #recent li:last-child { font-weight: bold; }
+  .inspection { background-color: #bcc9e2; outline: 2px solid #445e8a; outline-offset: -2px; }
+  .inspection-shot { box-shadow: inset 0 0 0 3px #a3522e; }
+  @media (max-width: 1000px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+  }
+  #status { min-height: 1.5em; }
+  .scroll { overflow: auto; padding: 4px; }
+  #board { min-width: 42rem; display: grid; grid-template-columns: 2rem repeat(19, 1fr);
+    align-items: center; text-align: center; background: #deb77e; border: 1px solid #927447;
+    border-radius: 6px; padding: 0.5rem; }
+  .axis { font-size: 0.75rem; color: #533a24; }
+  .cell { aspect-ratio: 1; padding: 0; border: 0; display: grid; place-items: center;
+    background: linear-gradient(#917044, #917044) center / 1px 100% no-repeat,
+      linear-gradient(#917044, #917044) center / 100% 1px no-repeat; cursor: pointer; }
+  .stone { width: 92%; aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center;
+    font: bold clamp(10px, 1.15vw, 15px) serif; white-space: nowrap; box-shadow: 0 1px 2px #50371e; }
+  .black { background: #252722; color: #fff7e7; }
+  .white { background: #fff5df; color: #2f2822; }
+  .white.promoted { color: #a0171e; }
+  .black.promoted { color: #ff817e; }
+  .cell.last-origin { box-shadow: inset 0 0 0 2px #5c7494; }
+  .cell.last-step { box-shadow: inset 0 0 0 3px #2e5d99; }
+  .cell.last-shot { box-shadow: inset 0 0 0 3px #ab3f33; }
+  #recent { margin: 0 0 .6rem; padding-left: 1.4rem; }
+  #recent:empty { display: none; }
+  .selected { background-color: #ebc452; outline: 2px solid #674900; outline-offset: -2px; }
+  .destination { background-color: #9bc780; outline: 2px solid #356344; outline-offset: -2px; }
+  .destination:empty::after { content: ''; width: 25%; aspect-ratio: 1; border-radius: 50%; background: #356344; }
+  #choices { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  #choices button { margin-bottom: 0.5rem; padding: 0.35rem 0.65rem; }
+  .shot { background-color: #e7a381; outline-color: #883c24; }
+  .cell:focus-visible { outline: 3px solid #174a82; z-index: 1; }
+  #reset { padding: 0.45rem 0.7rem; border: 1px solid #897a66; border-radius: 5px;
+    background: #fffaf0; color: inherit; cursor: pointer; }
+</style>
+<main>
+  <header><h1>広将棋</h1><div>
+      <label>対局相手 <select id="opponent">
+        <option value="human">人</option>
+        <option value="ai">ランダムAI</option>
+        <option value="search">探索AI</option>
+      </select></label>
+      <button id="sound" type="button" aria-pressed="true">着手音オン</button>
+      <button id="toss" type="button" disabled>振り駒で新局</button>
+      <button id="undo" type="button" disabled>待った</button>
+      <button id="reset">初期配置に戻す</button>
+    </div></header>
+  <div class="layout">
+    <div class="scroll"><div id="board" aria-label="広将棋の盤面"></div></div>
+    <aside class="panel" aria-label="対局操作と棋譜">
+      <p id="status" role="status">盤面を読み込み中</p>
+      <p id="toss-result" role="status" hidden></p>
+      <section id="ability" aria-label="駒の能力" hidden><h2 id="ability-name"></h2><p id="ability-text"></p></section>
+      <p id="inspection" role="status" hidden></p>
+      <div id="choices" aria-label="一手の選択"></div>
+      <h2>棋譜</h2>
+      <p id="empty-history">まだ着手はありません。</p>
+      <ol id="recent" aria-label="棋譜"></ol>
+    </aside>
+  </div>
+</main>
+<script>
+  const files = [..."ABCDEFGHJKLMNOPQRST"];
+  const board = document.querySelector("#board");
+  const status = document.querySelector("#status");
+  const reset = document.querySelector("#reset");
+  const opponent = document.querySelector("#opponent");
+  let mode = "human";
+  let humanSide = "black";
+  const toss = document.querySelector("#toss");
+  const undo = document.querySelector("#undo");
+  const tossResult = document.querySelector("#toss-result");
+
+  function undoLength() {
+    if (mode === "human") return Math.max(0, history.length - 1);
+    const opening = humanSide === "white" ? 1 : 0;
+    const humanMoves = Math.ceil((history.length - opening) / 2);
+    return opening + Math.max(0, humanMoves - 1) * 2;
+  }
+  const cells = new Map();
+  let current;
+  let history = [];
+  let recent = [];
+  const recentList = document.querySelector("#recent");
+  const aiDelay = 700;
+  const abilities = {
+    歩兵: "縦横に1路。味方の鼓または霹靂がいないと前に進めない。",
+    歩総: "縦に何路でも、横に1路進める。",
+    都司: "縦・斜めに何路でも進める。",
+    先鋒: "正面に5路まで進める。",
+    車: "縦横に5路まで。弓・弩系の射撃を受けず、天塁を取れない。",
+    車総: "縦横に何路でも。弓・弩系の射撃を受けず、天塁を取れない。",
+    牌: "斜めに1路。弓・弩系の射撃を受けない。",
+    牌総: "横に何路でも、斜めに1路。射撃を受けず、砲の射線を遮る。",
+    天塁: "横・斜めに何路でも。射撃を受けず、砲の射線を遮る。車・車総・砲車・神機車には移動で取られない。",
+    象: "斜めに何路でも進める。",
+    将: "周囲8方向に1路。残っている中軍・帥・旗とともに勝敗に関わる。",
+    中軍: "周囲8方向に1路。成ると帥になる。",
+    帥: "周囲8方向に1路。帥が残っていれば、将と旗を失っても負けにならない。",
+    馬兵: "一方の軸に2路、もう一方に1路の位置へ跳ぶ。仏狼機を取ったときも成れる。",
+    騎総: "馬兵のように跳ぶ。二跳目は長い軸の方向を保ち、短い軸では左右を選べる。各着地点で敵駒を取れる。",
+    天馬: "馬兵の跳躍を一手に2回まで。途中で敵駒を取って元の位置に戻ることもできる。",
+    弓: "斜めに1路。移動後、8方向に3路まで1枚を射撃できる。途中の駒が射線を遮る。",
+    弩: "斜めに1路。移動後、8方向に5路まで1枚を射撃できる。この対局では途中の駒が射線を遮る。",
+    彍騎: "馬兵のように跳び、移動後は弓と同じ射撃ができる。",
+    弩騎: "馬兵のように跳び、移動後は弩と同じ射撃ができる。",
+    砲: "斜めに1路。移動後、8方向に5路まで1枚を射撃できる。牌総・天塁が射線を遮る。",
+    砲車: "縦横に5路まで。砲と同じ射撃ができ、弓・弩系の射撃を受けない。天塁は移動で取れない。",
+    仏狼機: "斜めに1路。移動後、8方向に7路まで最大2枚を射撃できる。同じ射線では手前から取る。",
+    神機車: "縦横に5路まで。仏狼機と同じ射撃ができる。天塁は移動で取れない。",
+    旗: "横・斜めに1路。勝敗に関わる駒で、高道系が残っていれば招揺に成れる。",
+    鼓: "横・斜めに1路。味方の歩兵が前進できるようにする。高道系が残っていれば霹靂に成れる。",
+    招揺: "縦横に5路まで直進し、通り道の敵駒も取る。高道系を失うと旗に戻る。",
+    霹靂: "縦横に1路ずつ、一手に5回まで移動して敵駒を取る。高道系を失うと鼓に戻る。",
+    百総: "斜めに何路でも、縦横に1路進める。",
+    把総: "縦横に何路でも、斜めに1路進める。",
+    力士: "周囲8方向に1路ずつ、一手に2回まで。敵駒を取って元の位置に戻ることもできる。",
+    親兵: "真後ろを除く7方向に1路進める。",
+    護兵: "正面を除く7方向に1路進める。",
+    舎人: "斜め後ろを除く6方向に1路進める。",
+    舎餘: "正面・斜めに1路進める。",
+    軍吏: "縦・斜めに1路進める。",
+    軍匠: "正面・斜め前・真後ろに1路進める。",
+    毒火: "軍匠と同じ動き。移動時に隣接する敵味方を除去し、隣に着地した駒も除去する。",
+    千戸: "縦に何路でも、それ以外に1路進める。",
+    百戸: "横に何路でも、それ以外に1路進める。",
+    副司: "正面・斜めに何路でも進める。",
+    前衝: "正面に何路でも、真後ろに1路進める。",
+    後衝: "真後ろに何路でも、正面に1路進める。",
+    天網: "横・斜め前に何路でも、真後ろに1路進める。",
+    地網: "横・斜め後ろに何路でも、正面に1路進める。",
+    記室: "斜めに1路、または縦横に2路跳ぶ。軍師に成ると味方の前衝・後衝も成れ、敵の毒火を除去する。",
+    軍師: "記室の動きを、一手に2回まで行える。",
+    参謀: "縦横に1路、または斜めに2路跳ぶ。",
+    旗鼓: "参謀の動きを、一手に2回まで行える。",
+    鷹揚: "斜めに何路でも、または縦横に1路ずつ2回まで進める。",
+    虎翼: "縦横に何路でも、または斜めに1路ずつ2回まで進める。",
+    千総: "縦横斜めに何路でも進める。",
+    龍驤: "縦横斜めに何路でも、または周囲8方向に1路ずつ2回まで進める。",
+    高道: "周囲8方向に2路跳ぶ。着地で取れるのは高道・神僧系。移動を終えた後、隣接する敵1枚を射撃対象として選べる。",
+    五里霧: "高道と同じ跳躍を一手に2回まで。移動を終えた後、隣接する敵1枚を射撃対象として選べる。周囲5路で敵の射撃を封じる。敵の聖燈が近づくと高道に戻る。",
+    神僧: "周囲8方向に2路跳ぶ。着地で取れるのは高道・神僧系。",
+    聖燈: "神僧の動きを一手に2回まで。8方向の5路以内にいる敵の五里霧を高道に戻す。"
+  };
+  const ability = document.querySelector("#ability");
+  const abilityName = document.querySelector("#ability-name");
+  const abilityText = document.querySelector("#ability-text");
+  const inspectionStatus = document.querySelector("#inspection");
+  const emptyHistory = document.querySelector("#empty-history");
+  const sound = document.querySelector("#sound");
+  let inspected;
+  let audio;
+  let soundEnabled = true;
+
+  function unlockAudio() {
+    const Audio = window.AudioContext || window.webkitAudioContext;
+    if (!Audio || !soundEnabled) return;
+    audio ??= new Audio();
+    if (audio.state === "suspended") audio.resume().catch(() => {});
+  }
+
+  function impact(at, duration, frequency, gain, filterType) {
+    const buffer = audio.createBuffer(1, Math.ceil(audio.sampleRate * duration), audio.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) {
+      samples[i] = Math.random() * 2 - 1;
+    }
+    const noise = audio.createBufferSource();
+    noise.buffer = buffer;
+    const filter = audio.createBiquadFilter();
+    filter.type = filterType;
+    filter.frequency.value = frequency;
+    const volume = audio.createGain();
+    volume.gain.setValueAtTime(.001, at);
+    volume.gain.exponentialRampToValueAtTime(gain, at + .002);
+    volume.gain.exponentialRampToValueAtTime(.001, at + duration);
+    noise.connect(filter).connect(volume).connect(audio.destination);
+    noise.start(at);
+  }
+
+  function playSound(move) {
+    if (!soundEnabled || audio?.state !== "running") return;
+    const now = audio.currentTime;
+    impact(now, .036, 2400, .28, "bandpass");
+    move.shots.forEach((_, index) => {
+      const at = now + .09 + index * .13;
+      impact(at, .105, 1250, .42, "lowpass");
+
+      const thump = audio.createOscillator();
+      const volume = audio.createGain();
+      thump.frequency.setValueAtTime(150, at);
+      thump.frequency.exponentialRampToValueAtTime(65, at + .065);
+      volume.gain.setValueAtTime(.001, at);
+      volume.gain.exponentialRampToValueAtTime(.15, at + .003);
+      volume.gain.exponentialRampToValueAtTime(.001, at + .075);
+      thump.connect(volume).connect(audio.destination);
+      thump.start(at);
+      thump.stop(at + .08);
+    });
+  }
+
+  sound.addEventListener("click", () => {
+    soundEnabled = !soundEnabled;
+    sound.setAttribute("aria-pressed", String(soundEnabled));
+    sound.textContent = soundEnabled ? "着手音オン" : "着手音オフ";
+    unlockAudio();
+  });
+
+  function record(move, before) {
+    const piece = before.pieces[move.from];
+    const player = mode !== "human" && piece.side !== humanSide ? "AI（" + (piece.side === "black" ? "黒" : "白") + "）" : sideName(piece.side);
+    const route = [move.from, ...move.path].join(" → ");
+    const shot = move.shots.length ? " ／ 射撃 " + move.shots.join("、") : "";
+    const promotion = move.promote ? " ／ 成り" : "";
+    const linked = move.linked?.length ? " ／ 連動して成る " + move.linked.join("、") : "";
+    const item = document.createElement("li");
+    item.textContent = player + " " + piece.name + " " + route + shot + promotion + linked;
+    recentList.append(item);
+    recentList.scrollTop = recentList.scrollHeight;
+    recent.push(move);
+    playSound(move);
+  }
+  let selected;
+  let path = [];
+  let shots = [];
+  let stage = "move";
+  const choices = document.querySelector("#choices");
+
+  function clearSelection() {
+    selected = undefined;
+    inspected = undefined;
+    path = [];
+    shots = [];
+    stage = "move";
+  }
+
+  function matches(sequence, prefix) {
+    return prefix.every((coordinate, index) => sequence[index] === coordinate);
+  }
+
+  function available() {
+    return (current.moves[selected] ?? []).filter(action =>
+      matches(action.path, path) && matches(action.shots, shots) &&
+      (stage === "move" || action.path.length === path.length));
+  }
+
+  function nextSquares() {
+    return new Set(available().map(action =>
+      stage === "move" ? action.path[path.length] : action.shots[shots.length]
+    ).filter(Boolean));
+  }
+
+  function completeAction() {
+    return available().find(action =>
+      action.path.length === path.length && action.shots.length === shots.length);
+  }
+
+  function button(label, callback) {
+    const element = document.createElement("button");
+    element.type = "button";
+    element.textContent = label;
+    element.addEventListener("click", callback);
+    choices.append(element);
+  }
+
+  function play(promote, linked = []) {
+    load([...history, {from: selected, path, shots, promote, linked}]);
+  }
+
+  function finishAction() {
+    if (completeAction().promotion) {
+      stage = "promotion";
+      draw();
+    } else {
+      play(false);
+    }
+  }
+
+  function afterStep() {
+    if (nextSquares().size) {
+      draw();
+    } else if (stage === "move") {
+      stage = "shoot";
+      afterStep();
+    } else {
+      finishAction();
+    }
+  }
+  let busy = false;
+
+  function axis(text) {
+    const element = document.createElement("span");
+    element.className = "axis";
+    element.textContent = text;
+    board.append(element);
+  }
+
+  function buildBoard(blackAtBottom) {
+    board.replaceChildren();
+    cells.clear();
+    const orderedFiles = blackAtBottom ? [...files].reverse() : files;
+    axis("");
+    orderedFiles.forEach(axis);
+    for (let index = 1; index <= 19; index++) {
+      const rank = blackAtBottom ? index : 20 - index;
+      axis(rank);
+      for (const file of orderedFiles) {
+        const coordinate = file + rank;
+        const cell = document.createElement("button");
+        cell.type = "button";
+        cell.className = "cell";
+        cell.dataset.coordinate = coordinate;
+        cell.addEventListener("click", () => select(coordinate));
+        cells.set(coordinate, cell);
+        board.append(cell);
+      }
+    }
+  }
+
+  buildBoard(false);
+
+  function sideName(side) {
+    return side === "black" ? "先手（黒）" : "後手（白）";
+  }
+
+  function draw(thinking = false) {
+    const last = recent.at(-1);
+    emptyHistory.hidden = recentList.childElementCount > 0;
+    const inspectedPiece = current.pieces[inspected];
+    ability.hidden = !inspectedPiece;
+    if (inspectedPiece) {
+      abilityName.textContent = inspectedPiece.name;
+      abilityText.textContent = abilities[inspectedPiece.name] ?? "能力説明は準備中です。";
+    }
+    const preview = current.inspections?.[inspected];
+    const showInspection = inspectedPiece && preview && !path.length;
+    inspectionStatus.hidden = !showInspection;
+    if (showInspection) {
+      const steps = preview.steps.join("、") || "なし";
+      const shots = preview.shots.join("、");
+      inspectionStatus.textContent = sideName(inspectedPiece.side) + " " +
+        inspectedPiece.name + " " + inspected + " ／ 最初の移動先 " + steps +
+        (shots ? " ／ 移動後に射撃できる対象 " + shots : "");
+    }
+    const destinations = stage === "promotion" ? new Set() : nextSquares();
+    const completed = completeAction();
+    const pieces = {...current.pieces};
+    const activeSquare = path.at(-1) ?? inspected;
+    if (completed) {
+      for (const [coordinate, piece] of Object.entries(completed.changes)) {
+        if (piece) pieces[coordinate] = piece;
+        else delete pieces[coordinate];
+      }
+    }
+    choices.replaceChildren();
+    if (current.winner) {
+      status.textContent = sideName(current.winner) + "の勝ち。対局終了。";
+    } else if (thinking) {
+      status.textContent = "AIが考え中…";
+    } else if (mode !== "human" && current.turn !== humanSide) {
+      status.textContent = "AIが指せる手はありません。";
+    } else {
+      const prompt = {
+        move: selected ? "移動先を選んでください。" : "駒を選んでください。",
+        shoot: "射撃対象を選んでください。",
+        promotion: "成るか選んでください。"
+      };
+      status.textContent = sideName(current.turn) + "の手番。 " + prompt[stage];
+    }
+    if (stage === "move" && completed) {
+      button("この位置で移動を終える", () => { stage = "shoot"; afterStep(); });
+    }
+    if (stage === "shoot" && completed) {
+      button(shots.length ? "射撃を終える" : "射撃しない", finishAction);
+    }
+    if (stage === "promotion") {
+      const linked = completed.linked.map(coordinate => {
+        const option = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        option.append(checkbox, coordinate + "の" + pieces[coordinate].name + "も成る");
+        choices.append(option);
+        return {coordinate, checkbox};
+      });
+      button(completed.promotion + "に成る", () =>
+        play(true, linked.filter(item => item.checkbox.checked).map(item => item.coordinate)));
+      button("成らない", () => play(false));
+    }
+    if (path.length) button("選択を取り消す", () => { clearSelection(); draw(); });
+    for (const [coordinate, cell] of cells) {
+      const piece = pieces[coordinate];
+      const destination = destinations.has(coordinate);
+      cell.classList.toggle("last-origin", coordinate === last?.from);
+      cell.classList.toggle("last-step", Boolean(last?.path.includes(coordinate)));
+      cell.classList.toggle("last-shot", Boolean(last?.shots.includes(coordinate)));
+      cell.classList.toggle("inspection", Boolean(showInspection && !selected && preview.steps.includes(coordinate)));
+      cell.classList.toggle("inspection-shot", Boolean(showInspection && preview.shots.includes(coordinate)));
+      cell.classList.toggle("selected", coordinate === activeSquare);
+      cell.classList.toggle("destination", destination);
+      cell.classList.toggle("shot", destination && stage === "shoot");
+      cell.setAttribute("aria-pressed", String(coordinate === activeSquare));
+      cell.setAttribute("aria-label", [
+        coordinate, piece && sideName(piece.side) + "の" + piece.name, destination && (stage === "shoot" ? "射撃対象" : "移動先")
+      ].filter(Boolean).join("、"));
+      cell.replaceChildren();
+      if (piece) {
+        const stone = document.createElement("span");
+        stone.className = "stone " + piece.side;
+        stone.classList.toggle("promoted", piece.promoted);
+        stone.textContent = piece.name;
+        cell.append(stone);
+      }
+    }
+  }
+
+  let engine;
+  let requestId = 0;
+  const pending = new Map();
+
+  function browserPosition(history, opponent) {
+    if (!engine) {
+      engine = new Worker(new URL("./static_worker.mjs", document.baseURI), {type: "module"});
+      engine.onmessage = ({data: {id, state, error}}) => {
+        const request = pending.get(id);
+        pending.delete(id);
+        if (error) request.reject(new Error(error));
+        else request.resolve(state);
+      };
+      engine.onerror = () => {
+        engine.terminate();
+        engine = undefined;
+        for (const request of pending.values()) request.reject(new Error("Worker failed"));
+        pending.clear();
+      };
+    }
+    return new Promise((resolve, reject) => {
+      const id = ++requestId;
+      pending.set(id, {resolve, reject});
+      engine.postMessage({id, history, opponent: opponent === "human" ? "" : opponent, humanSide});
+    });
+  }
+
+  async function fetchPosition(moves, opponent = "human") {
+    if (document.documentElement.dataset.engine === "browser") {
+      return browserPosition(moves, opponent);
+    }
+    const url = opponent === "human" ? "/position" : "/position?opponent=" + opponent + "&human=" + humanSide;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(moves)
+    });
+    if (!response.ok) throw new Error();
+    return response.json();
+  }
+
+  async function load(nextHistory, nextMode = mode, retryAI = false, nextSide = humanSide, tossText = "") {
+    if (busy) return;
+    busy = true;
+    reset.disabled = true;
+    opponent.disabled = true;
+    undo.disabled = true;
+    toss.disabled = true;
+    let awaitingAI = retryAI;
+    try {
+      if (!retryAI) {
+        const response = await fetchPosition(nextHistory);
+        const blackAtBottom = nextMode !== "human" && nextSide === "black";
+        if ((mode !== "human" && humanSide === "black") !== blackAtBottom) {
+          buildBoard(blackAtBottom);
+        }
+        if (nextMode !== mode || nextSide !== humanSide) tossResult.hidden = true;
+        mode = nextMode;
+        humanSide = nextSide;
+        if (!nextHistory.length || nextHistory.length < history.length) {
+          recent.length = nextHistory.length;
+          while (recentList.childElementCount > nextHistory.length) {
+            recentList.lastElementChild.remove();
+          }
+        } else record(nextHistory.at(-1), current);
+        if (!nextHistory.length && !tossText && nextMode === "human") {
+          tossResult.hidden = true;
+        }
+        if (tossText) {
+          tossResult.textContent = tossText;
+          tossResult.hidden = false;
+        }
+        current = response;
+        history = nextHistory;
+        clearSelection();
+        awaitingAI = mode !== "human" && current.turn !== humanSide && !current.winner;
+      }
+      draw(awaitingAI);
+      if (awaitingAI) {
+        const earliest = performance.now() + aiDelay;
+        const response = await fetchPosition(history, mode);
+        if (response.aiMove) {
+          await new Promise(resolve => setTimeout(resolve, Math.max(0, earliest - performance.now())));
+          record(response.aiMove, current);
+          history = [...history, response.aiMove];
+        }
+        current = response;
+        draw();
+      }
+    } catch {
+      status.textContent = "盤面を更新できませんでした。もう一度操作してください。";
+      if (awaitingAI) button("AIの手を再試行", () => load(history, mode, true));
+    } finally {
+      busy = false;
+      reset.disabled = false;
+      opponent.disabled = false;
+      opponent.value = mode;
+      toss.disabled = mode === "human" || !current;
+      const opening = mode !== "human" && humanSide === "white" ? 1 : 0;
+      undo.disabled = history.length <= opening;
+    }
+  }
+
+  function select(coordinate) {
+    if (!current || busy || stage === "promotion") return;
+    unlockAudio();
+    if (nextSquares().has(coordinate)) {
+      if (stage === "move") path = [...path, coordinate];
+      else shots = [...shots, coordinate];
+      afterStep();
+      return;
+    }
+    if (path.length) return;
+    const piece = current.pieces[coordinate];
+    inspected = piece && inspected !== coordinate ? coordinate : undefined;
+    const canMove = !current.winner && (mode === "human" || current.turn === humanSide);
+    selected = inspected && canMove && piece.side === current.turn ? inspected : undefined;
+    draw();
+  }
+
+  opponent.addEventListener("change", () => load([], opponent.value, false, "black"));
+  undo.addEventListener("click", () => load(history.slice(0, undoLength())));
+  toss.addEventListener("click", () => {
+    unlockAudio();
+    const faces = Array.from({length: 5}, () => Math.random() < .5 ? "歩" : "と");
+    const side = faces.filter(face => face === "歩").length >= 3 ? "black" : "white";
+    load([], mode, false, side, "振り駒 " + faces.join(" ") + " ／ あなたは" + sideName(side));
+  });
+  reset.addEventListener("click", () => load([]));
+  load([]);
+</script>
+</html>
