@@ -13,8 +13,11 @@ def main():
     args.output.mkdir()
     package = args.output / "koushougi"
     package.mkdir()
-    for name in ("__init__.py", "game.py", "ai.py", "position.py"):
-        copyfile(source / name, package / name)
+    for name in ("__init__.py", "board.py", "game.py", "position.py", "kifu.py", "evaluation.py", "value_network.py",
+                 "move_ordering.py", "search.py", "players/__init__.py", "players/alpha_beta.py"):
+        destination = package / name
+        destination.parent.mkdir(exist_ok=True)
+        copyfile(source / name, destination)
     copyfile(source / "static_worker.mjs", args.output / "static_worker.mjs")
     html = (source / "board.html").read_text(encoding="utf-8")
     html = html.replace("<html lang=\"ja\">", '<html lang="ja" data-engine="browser">')

@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .position import position
+from .kifu import MAX_RECORD_BYTES, replay_record
 
 class Handler(BaseHTTPRequestHandler):
     def respond(self, status, content_type, body):
@@ -43,18 +44,25 @@ class Handler(BaseHTTPRequestHandler):
         if human_side not in {"black", "white"}:
             self.send_error(400)
             return
-        if url.path != "/position" or opponent not in {"", "ai", "search"}:
+        if url.path not in {"/position", "/record"} or opponent not in {"", "ai", "search"}:
             self.send_error(404)
             return
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 65536:
+            if not 0 < size <= MAX_RECORD_BYTES:
                 raise ValueError()
             history = json.loads(self.rfile.read(size))
         except ValueError:
             self.send_error(400)
             return
-        self.send_position(history, ai=opponent, human_side=human_side)
+        if url.path == "/record":
+            try:
+                payload = replay_record(history)
+                self.respond(200, "application/json", json.dumps(payload).encode())
+            except (ValueError, KeyError, TypeError, IndexError) as error:
+                self.respond(400, "application/json", json.dumps({"error": str(error)}).encode())
+        else:
+            self.send_position(history, ai=opponent, human_side=human_side)
 
 
 if __name__ == "__main__":

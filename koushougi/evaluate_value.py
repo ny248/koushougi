@@ -1,24 +1,24 @@
-"""学習済みの局面評価を同じ条件で対戦させる。"""
+"""同じαβ探索で、採点NNの重みが異なるモデルを比較する。"""
 
 import argparse
 from collections import Counter
 import json
+from math import isfinite
 from pathlib import Path
 from random import Random
 
-from .ai import choose_move
 from .game import Game, outcome
-from .selfplay import model_move
-from .train_value import load_weights
+from .players.alpha_beta import select_move
+from .value_network import load_network
 
 
-def match(candidate, baseline, max_plies, seed, candidate_side):
+def match(candidate, baseline, max_plies, seed, candidate_side, *, seconds=2.0, depth=3):
     game = Game()
     random_by_side = {"black": Random(seed), "white": Random(seed + 1)}
     for _ in range(max_plies):
-        weights = candidate if game.turn == candidate_side else baseline
-        rng = random_by_side[game.turn]
-        move = choose_move(game, rng) if weights is None else model_move(game, rng, weights)
+        model = candidate if game.turn == candidate_side else baseline
+        move = select_move(game, model=model, rng=random_by_side[game.turn],
+                           time_limit=seconds, max_depth=depth)
         if move is None:
             return "no_legal_move"
         game.play(*move)
@@ -35,17 +35,19 @@ def main():
     parser.add_argument("--pairs", type=int, default=4)
     parser.add_argument("--seed", type=int, default=400)
     parser.add_argument("--max-plies", type=int, default=1500)
+    parser.add_argument("--seconds", type=float, default=2.0)
+    parser.add_argument("--depth", type=int, default=3)
     args = parser.parse_args()
-    if args.pairs < 1 or args.max_plies < 1:
-        parser.error("--pairs と --max-plies には正の整数を指定してください")
-    candidate, baseline = load_weights(args.candidate), load_weights(args.baseline)
+    if min(args.pairs, args.max_plies, args.depth) < 1 or not isfinite(args.seconds) or args.seconds <= 0:
+        parser.error("対局組数・手数・探索深さ・思考時間には正の値を指定してください")
+    candidate, baseline = load_network(args.candidate), load_network(args.baseline)
     results = Counter({key: 0 for key in ("win", "loss", "ply_limit", "no_legal_move")})
     for pair in range(args.pairs):
         for side in ("black", "white"):
-            result = match(candidate, baseline, args.max_plies, args.seed + 2 * pair, side)
+            result = match(candidate, baseline, args.max_plies, args.seed + 2 * pair, side,
+                           seconds=args.seconds, depth=args.depth)
             results[result] += 1
-            print(json.dumps({"pair": pair + 1, "candidate_side": side, "result": result}),
-                  flush=True)
+            print(json.dumps({"pair": pair + 1, "candidate_side": side, "result": result}), flush=True)
     print(json.dumps({"games": 2 * args.pairs, "seed": args.seed, **results}))
 
 

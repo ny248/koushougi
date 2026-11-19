@@ -1,55 +1,26 @@
-"""広将棋の自己対戦を実行し、勝敗付きの局面を出力する。"""
+"""採点NNとαβ探索による自己対戦から、勝敗付きの学習局面を保存する。"""
 
 import argparse
 import json
+from math import isfinite
 from pathlib import Path
-from copy import copy
 from random import Random
 from time import perf_counter
 
-from .ai import choose_move
-from .game import Game, outcome, promotion
-from .train_value import features, load_weights, predict
+from .game import Game, outcome
+from .players.alpha_beta import analyze_search
+from .value_network import load_network
 
 
-def model_move(game, rng, weights):
-    """候補を無作為に絞り、盤面評価が良い手を選ぶ。"""
-    if rng.random() < 0.15:
-        return choose_move(game, rng)
-    moves = [
-        action
-        for cell, piece in game.board.items()
-        if piece.side == game.turn
-        for action in game.actions(cell)
-    ]
-    best = None
-    best_score = -float("inf")
-    for action in rng.sample(moves, min(8, len(moves))):
-        for promote in (False, True) if promotion(game.board, action) else (False,):
-            child = copy(game)
-            child.play(action, promote)
-            winner = outcome(child.board)
-            if winner:
-                score = 2 if winner == game.turn else -2
-            else:
-                pieces = ((x, y, p.side, p.name, p.promoted)
-                          for (x, y), p in child.board.items())
-                score = predict(weights, features(pieces, game.turn))
-            if score > best_score:
-                best_score = score
-                best = action, promote, ()
-    return best
-
-
-def selfplay(rng, max_plies, weights=None):
+def selfplay(rng, max_plies, model=None, *, seconds=2.0, depth=3):
     game = Game()
     positions = []
     for _ in range(max_plies):
-        choice = choose_move(game, rng) if weights is None else model_move(game, rng, weights)
-        if choice is None:
+        result = analyze_search(game, model=model, time_limit=seconds, max_depth=depth)
+        if result is None:
             return positions, None, "no_legal_move"
-        positions.append((game.turn, game.board))
-        game.play(*choice)
+        positions.append((game.turn, game.board, result.score, result.depth))
+        game.play(*rng.choice(result.best_moves))
         winner = outcome(game.board)
         if winner:
             return positions, winner, "completed"
@@ -63,26 +34,29 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", type=Path)
+    parser.add_argument("--seconds", type=float, default=2.0)
+    parser.add_argument("--depth", type=int, default=3)
     args = parser.parse_args()
-    if args.games < 1 or args.max_plies < 1:
-        parser.error("--games と --max-plies は正の整数を指定してください")
-
-    weights = load_weights(args.model)
+    if min(args.games, args.max_plies, args.depth) < 1 or not isfinite(args.seconds) or args.seconds <= 0:
+        parser.error("局数・手数・探索深さ・思考時間には正の値を指定してください")
+    model = load_network(args.model)
     rng = Random(args.seed)
     counts = {"black": 0, "white": 0, "ply_limit": 0, "no_legal_move": 0}
     total_plies = samples = 0
     started = perf_counter()
     with args.output.open("x", encoding="utf-8") as output:
         for game_id in range(args.games):
-            positions, winner, reason = selfplay(rng, args.max_plies, weights)
+            positions, winner, reason = selfplay(rng, args.max_plies, model,
+                                                 seconds=args.seconds, depth=args.depth)
             total_plies += len(positions)
             counts[winner or reason] += 1
             if winner is None:
                 continue
-            for ply, (turn, board) in enumerate(positions):
+            for ply, (turn, board, score, depth) in enumerate(positions):
                 sample = {
                     "game": game_id, "ply": ply, "turn": turn,
                     "value": 1 if winner == turn else -1,
+                    "search_score": score, "search_depth": depth,
                     "pieces": [[x, y, p.side, p.name, p.promoted]
                                for (x, y), p in sorted(board.items())],
                 }
@@ -91,6 +65,7 @@ def main():
     elapsed = perf_counter() - started
     print(json.dumps({"games": args.games, "seed": args.seed, "max_plies": args.max_plies,
                       "model": str(args.model) if args.model else None,
+                      "seconds_per_move": args.seconds, "max_depth": args.depth,
                       **counts, "plies": total_plies, "samples": samples,
                       "seconds": round(elapsed, 2),
                       "plies_per_second": round(total_plies / elapsed, 1)}))
