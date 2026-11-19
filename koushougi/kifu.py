@@ -35,7 +35,7 @@ def replay_record(record):
     human_side = record.get("humanSide", "black")
     resigned = record.get("resignedSide")
     end_reason = record.get("endReason")
-    if opponent not in ("human", "search") or human_side not in ("black", "white") or resigned not in (None, "black", "white") or end_reason not in (None, "win", "ply_limit", "no_legal_move"):
+    if opponent not in ("human", "search", "trained") or human_side not in ("black", "white") or resigned not in (None, "black", "white") or end_reason not in (None, "win", "ply_limit", "no_legal_move"):
         raise ValueError("対局情報が不正です")
     game = Game()
     frames = [_snapshot(game)]

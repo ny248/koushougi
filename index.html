@@ -1,6 +1,7 @@
 <!doctype html>
-<html lang="ja" data-engine="browser">
+<html lang="ja" data-engine="browser" data-build="9a897794abbdf4f8">
 <meta charset="utf-8">
+<meta name="google-site-verification" content="2E92BkDQUVLerhS7V1t2kZnDCiFpEOtHvHcxaAKRvOk" />
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>広将棋</title>
 <style>
@@ -150,7 +151,8 @@
       <label>対局相手
         <select id="opponent" autofocus>
           <option value="human">人</option>
-          <option value="search">AI</option>
+          <option value="search">AI（初期モデル）</option>
+          <option value="trained">AI（学習済みモデル）</option>
         </select>
       </label>
       <label id="toss-option" hidden>あなたの手番
@@ -432,7 +434,7 @@
 
   function record(move, before, quiet = false) {
     const piece = before.pieces[move.from];
-    const player = mode !== "human" && piece.side !== humanSide ? "AI（" + (piece.side === "black" ? "黒" : "白") + "）" : sideName(piece.side);
+    const player = mode !== "human" && piece.side !== humanSide ? (mode === "trained" ? "学習済みAI（" : "AI（") + (piece.side === "black" ? "黒" : "白") + "）" : sideName(piece.side);
     const route = moveSequence(move).reduce((text, event) =>
       text + (event.kind === "move" ? " → " : " ／ 射撃 ") + event.square, move.from);
     const promotion = move.promote ? " ／ 成り" : "";
@@ -604,7 +606,7 @@
         ? "対局終了。「新しい対局」で次の対局を始められます。"
         : "対局前です。「新しい対局」で始めてください。";
     } else if (thinking) {
-      status.textContent = "AIが考え中…";
+      status.textContent = mode === "trained" ? "学習済みAIが考え中…" : "AIが考え中…";
     } else if (mode !== "human" && current.turn !== humanSide) {
       status.textContent = "AIが指せる手はありません。";
     } else {
@@ -674,7 +676,9 @@
 
   function browserPosition(history, opponent, operation = "position") {
     if (!engine) {
-      engine = new Worker(new URL("./static_worker.mjs", document.baseURI), {type: "module"});
+      const workerURL = new URL("./static_worker.mjs", document.baseURI);
+      if (document.documentElement.dataset.build) workerURL.searchParams.set("v", document.documentElement.dataset.build);
+      engine = new Worker(workerURL, {type: "module"});
       engine.onmessage = ({data: {id, state, error}}) => {
         const request = pending.get(id);
         pending.delete(id);

@@ -6,10 +6,13 @@ async function initialize() {
   python.FS.mkdir("/koushougi/players");
   const files = [
     "__init__.py", "board.py", "game.py", "position.py", "kifu.py", "evaluation.py", "value_network.py",
-    "move_ordering.py", "search.py", "players/__init__.py", "players/alpha_beta.py",
+    "move_ordering.py", "search.py", "trained_model.json", "players/__init__.py", "players/alpha_beta.py",
   ];
   await Promise.all(files.map(async name => {
-    const response = await fetch(new URL("./koushougi/" + name, import.meta.url));
+    const url = new URL("./koushougi/" + name, import.meta.url);
+    const version = new URL(import.meta.url).searchParams.get("v");
+    if (version) url.searchParams.set("v", version);
+    const response = await fetch(url);
     if (!response.ok) throw new Error("Failed to load " + name);
     python.FS.writeFile("/koushougi/" + name, await response.text());
   }));

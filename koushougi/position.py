@@ -1,8 +1,17 @@
 """対局履歴から画面に表示する局面を組み立てる。"""
 
+from functools import cache
+from pathlib import Path
+
 from . import Action, FILES, movement_actions, resolve_movement, square
 from .players.alpha_beta import select_move as choose_search_move
 from .game import Game, outcome, promotion
+from .value_network import load_network
+
+
+@cache
+def trained_model():
+    return load_network(Path(__file__).with_name("trained_model.json"))
 
 
 def label(cell):
@@ -48,7 +57,8 @@ def position(history, *, ai=False, human_side="black"):
                   promote, tuple(map(square, move.get("linked", []))))
     ai_move = None
     if ai and game.turn != human_side and not outcome(game.board):
-        choice = choose_search_move(game)
+        choice = (choose_search_move(game, model=trained_model()) if ai == "trained"
+                  else choose_search_move(game))
         if choice is not None:
             action, promote, linked = choice
             game.play(action, promote, linked)
@@ -66,6 +76,7 @@ def position(history, *, ai=False, human_side="black"):
     return {
         "inspections": inspections,
         "aiMove": ai_move,
+        "aiModel": ("trained" if ai == "trained" else "initial") if ai else None,
         "turn": game.turn,
         "winner": outcome(game.board),
         "pieces": {label(cell): vars(piece) for cell, piece in game.board.items()},
