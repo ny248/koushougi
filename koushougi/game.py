@@ -1,6 +1,10 @@
 """対局の一手と勝敗を扱う。"""
 
+from copy import copy
+from itertools import combinations
+
 from . import Piece, initial_state, land, movement_actions, resolve_movement, settle
+from .board import Board
 
 PROMOTIONS = {
     "歩兵": "歩総", "歩総": "都司", "先鋒": "都司", "車": "車総",
@@ -15,15 +19,24 @@ PROMOTIONS = {
 CAPTURE_PROMOTES = {"将", "中軍", "帥", "旗", "鼓"}
 ONE_STEP = {"親兵", "舎人", "舎餘", "軍吏", "軍匠", "中軍", "鼓",
             "護兵", "仏狼機", "弓", "弩", "砲", "歩兵", "牌", "旗"}
+LINKABLE = {"前衝", "後衝"}
 
 
 def promotion(board, action):
     """列挙済みの手について、任意で成れる駒名を返す。"""
     piece = board[action.origin]
+    if piece.promoted or piece.name not in PROMOTIONS:
+        return None
+    result, removed = resolve_movement(board, action)
+    return _promotion(piece, action, result, removed)
+
+
+def _promotion(piece, action, result, removed):
+    if piece.promoted:
+        return None
     promoted = PROMOTIONS.get(piece.name)
     if promoted is None:
         return None
-    result, removed = resolve_movement(board, action)
     if action.path[-1] not in result and piece.name != "記室":
         return None
     if piece.name in {"旗", "鼓"} and not any(
@@ -45,18 +58,25 @@ def promotion(board, action):
 
 def outcome(board):
     """将・中軍（帥）・旗（招揺）の残存状態から勝者を返す。"""
+    leaders, commanders, flags = set(), set(), set()
+    for piece in board.values():
+        if piece.name in {"将", "帥"}:
+            leaders.add(piece.side)
+            if "black" in leaders and "white" in leaders:
+                return None
+        elif piece.name == "中軍":
+            commanders.add(piece.side)
+        elif piece.name in {"旗", "招揺"}:
+            flags.add(piece.side)
     for side, opponent in (("black", "white"), ("white", "black")):
-        names = {piece.name for piece in board.values() if piece.side == side}
-        if "将" not in names and "帥" not in names and (
-            "中軍" not in names or not names.intersection({"旗", "招揺"})
-        ):
+        if side not in leaders and (side not in commanders or side not in flags):
             return opponent
     return None
 
 
 class Game:
     def __init__(self):
-        self.board = initial_state()
+        self.board = Board(initial_state())
         self.turn = "black"
 
     def actions(self, origin):
@@ -71,16 +91,51 @@ class Game:
     def play(self, action, promote=False, linked=()):
         if action not in self.actions(action.origin):
             raise ValueError("手を適用できません")
-        promoted = promotion(self.board, action) if promote else None
+        board, removed = resolve_movement(self.board, action)
+        promoted = _promotion(self.board[action.origin], action, board, removed) if promote else None
         if promote and promoted is None:
             raise ValueError("この手では成れません")
-        board, _ = resolve_movement(self.board, action)
-        destination = action.path[-1]
+        self._finish_move(board, action.path[-1], promoted, linked)
+
+    def successors(self, *, captures_only=False):
+        """合法手と遷移先を返す。移動・射撃後の盤面は成りの候補間で共有する。"""
+        source = self.board if isinstance(self.board, Board) else Board(self.board)
+        for origin, piece in self.board.items():
+            if piece.side != self.turn:
+                continue
+            for action in self.actions(origin):
+                board, removed = resolve_movement(source, action)
+                captures_enemy = captures_only and any(p.side != self.turn for p in removed)
+                if not captures_only or captures_enemy:
+                    child = copy(self)
+                    child._finish_move(board, action.path[-1], None, ())
+                    yield (action, False, ()), child
+                promoted = _promotion(piece, action, board, removed)
+                if promoted is None:
+                    continue
+                extra_capture = captures_only and not captures_enemy
+                if extra_capture and promoted not in {"毒火", "軍師"}:
+                    continue
+                eligible = tuple(cell for cell, other in sorted(board.items())
+                                 if other.side == self.turn and other.name in LINKABLE
+                                 ) if promoted == "軍師" else ()
+                for count in range(len(eligible) + 1):
+                    for linked in combinations(eligible, count):
+                        child = copy(self)
+                        child._finish_move(board.copy(), action.path[-1], promoted, linked)
+                        if extra_capture and not any(
+                            target.side != self.turn and cell not in child.board
+                            for cell, target in board.items()
+                        ):
+                            continue
+                        yield (action, True, linked), child
+
+    def _finish_move(self, board, destination, promoted, linked):
         if linked and promoted != "軍師":
             raise ValueError("連動して成ることはできません")
         for cell in linked:
             piece = board.get(cell)
-            if piece is None or piece.side != self.turn or piece.name not in {"前衝", "後衝"}:
+            if piece is None or piece.side != self.turn or piece.name not in LINKABLE:
                 raise ValueError("連動して成る駒が不正です")
             board[cell] = Piece(self.turn, PROMOTIONS[piece.name], True)
         if promoted and destination in board:
@@ -88,8 +143,11 @@ class Game:
             if promoted == "毒火":
                 land(board, destination, destination, [])
         if promoted == "軍師":
-            board = {cell: piece for cell, piece in board.items()
-                     if piece.side == self.turn or piece.name != "毒火"}
-        settle(board)
+            poison = [cell for cell, piece in board.items()
+                      if piece.side != self.turn and piece.name == "毒火"]
+            for cell in poison:
+                del board[cell]
+        if promoted:
+            settle(board)
         self.board = board
         self.turn = "white" if self.turn == "black" else "black"

@@ -10,20 +10,39 @@
   header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
   h1 { margin: 0; font: bold 2rem serif; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 19rem;
+    grid-template-areas: "board actions" "board guidance" "board details";
+    grid-template-rows: 7.5rem 10rem minmax(0, 1fr); height: var(--board-height, auto);
     gap: 1rem; align-items: start; margin-top: 1rem; }
   .panel { background: #fffaf0; border: 1px solid #d9ccb8; border-radius: 8px; padding: 1rem; }
-  .panel h2 { margin: 1rem 0 .5rem; font-size: 1rem; }
-  .panel p { margin: .25rem 0 .75rem; }
-  #recent { max-height: 22rem; overflow: auto; }
+  .panel h2 { margin: 0 0 .5rem; font-size: 1rem; }
+  .panel p { margin: 0; }
+  .panel p + p:not([hidden]) { margin-top: .5rem; }
+  .game-actions { grid-area: actions; height: 7.5rem; overflow: auto; }
+  .guidance { grid-area: guidance; height: 10rem; overflow: auto; }
+  .game-details { grid-area: details; display: grid; height: 100%; min-height: 0;
+    grid-template-rows: 13rem minmax(0, 1fr); gap: 1rem; }
+  #ability { height: 13rem; overflow: auto; }
+  #ability-text { white-space: pre-line; }
+  .game-history { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+  .game-history > :not(#recent) { flex-shrink: 0; }
+  #choices:not(:empty) { margin-top: .75rem; }
+  #recent { flex: 1; min-height: 5rem; overflow: auto; }
   #recent li { padding: .35rem 0; border-bottom: 1px solid #eee4d6; }
-  #recent li:last-child { font-weight: bold; }
+  #recent li[aria-current="step"] { background: #f1dfbd; font-weight: bold; }
+  #recent li button { border: 0; background: none; color: inherit; text-align: left; font: inherit; cursor: pointer; padding: .2rem; }
+  .record-tools { margin: .6rem 0; }
+  #replay-slider { width: 100%; }
+  #record-message { font-size: .9rem; white-space: pre-line; overflow-wrap: anywhere; }
+  #replay-controls[hidden] { display: none; }
   .inspection { background-color: #bcc9e2; outline: 2px solid #445e8a; outline-offset: -2px; }
   .inspection-shot { box-shadow: inset 0 0 0 3px #a3522e; }
   @media (max-width: 1000px) {
-    .layout { grid-template-columns: minmax(0, 1fr); }
+    .layout { grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "actions" "guidance" "board" "details"; grid-template-rows: auto; height: auto; }
+    .game-details { height: auto; grid-template-rows: 13rem 28rem; }
   }
   #status { min-height: 1.5em; }
-  .scroll { overflow: auto; padding: 4px; }
+  .scroll { grid-area: board; align-self: start; overflow: auto; }
   #board { min-width: 42rem; display: grid; grid-template-columns: 2rem repeat(19, 1fr);
     align-items: center; text-align: center; background: #deb77e; border: 1px solid #927447;
     border-radius: 6px; padding: 0.5rem; }
@@ -40,55 +59,154 @@
   .cell.last-origin { box-shadow: inset 0 0 0 2px #5c7494; }
   .cell.last-step { box-shadow: inset 0 0 0 3px #2e5d99; }
   .cell.last-shot { box-shadow: inset 0 0 0 3px #ab3f33; }
-  #recent { margin: 0 0 .6rem; padding-left: 1.4rem; }
+  #recent { margin: 0 0 .6rem; padding-left: 2.7rem; }
   #recent:empty { display: none; }
   .selected { background-color: #ebc452; outline: 2px solid #674900; outline-offset: -2px; }
   .destination { background-color: #9bc780; outline: 2px solid #356344; outline-offset: -2px; }
   .destination:empty::after { content: ''; width: 25%; aspect-ratio: 1; border-radius: 50%; background: #356344; }
   #choices { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-  #choices button { margin-bottom: 0.5rem; padding: 0.35rem 0.65rem; }
   .shot { background-color: #e7a381; outline-color: #883c24; }
   .cell:focus-visible { outline: 3px solid #174a82; z-index: 1; }
-  #reset { padding: 0.45rem 0.7rem; border: 1px solid #897a66; border-radius: 5px;
-    background: #fffaf0; color: inherit; cursor: pointer; }
+  .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .control, #choices button, dialog select {
+    padding: .45rem .65rem; border: 1px solid #897a66; border-radius: 5px;
+    background: #fffaf0; color: inherit; font: inherit; }
+  button.control:not(:disabled), #choices button { cursor: pointer; }
+  button.control:disabled { color: #73695d; background: #eee7dc; border-color: #d9ccb8; }
+  .control.primary { background: #4b3826; border-color: #4b3826; color: #fffaf0; }
+  .control.danger { color: #8a2925; }
+  dialog { width: min(25rem, calc(100% - 2rem)); max-height: calc(100% - 2rem);
+    padding: 1.25rem; border: 1px solid #d9ccb8; border-radius: 8px;
+    background: #fffaf0; color: inherit; }
+  dialog::backdrop { background: rgb(40 35 29 / .55); }
+  dialog h2 { margin: 0 0 1rem; font-size: 1.25rem; }
+  dialog p { margin: 0 0 1rem; }
+  dialog label:not([hidden]) { display: block; margin-bottom: 1rem; }
+  dialog select { display: block; width: 100%; margin-top: .35rem; }
+  dialog .actions { justify-content: flex-end; }
 </style>
 <main>
-  <header><h1>広将棋</h1><div>
-      <label>対局相手 <select id="opponent">
-        <option value="human">人</option>
-        <option value="ai">ランダムAI</option>
-        <option value="search">探索AI</option>
-      </select></label>
-      <button id="sound" type="button" aria-pressed="true">着手音オン</button>
-      <button id="toss" type="button" disabled>振り駒で新局</button>
-      <button id="undo" type="button" disabled>待った</button>
-      <button id="reset">初期配置に戻す</button>
-    </div></header>
+  <header>
+    <h1>広将棋</h1>
+    <button class="control" id="options" type="button" aria-haspopup="dialog" aria-controls="options-dialog">オプション</button>
+  </header>
   <div class="layout">
-    <div class="scroll"><div id="board" aria-label="広将棋の盤面"></div></div>
-    <aside class="panel" aria-label="対局操作と棋譜">
+    <section class="panel game-actions" aria-labelledby="game-actions-title">
+      <h2 id="game-actions-title">対局操作</h2>
+      <div class="actions">
+        <button class="control primary" id="new-game" type="button" aria-haspopup="dialog" disabled>新しい対局</button>
+        <button class="control" id="undo" type="button" disabled>待った</button>
+        <button class="control danger" id="resign" type="button" aria-haspopup="dialog" disabled>投了</button>
+      </div>
+    </section>
+    <section class="panel guidance" aria-label="着手の案内">
       <p id="status" role="status">盤面を読み込み中</p>
-      <p id="toss-result" role="status" hidden></p>
-      <section id="ability" aria-label="駒の能力" hidden><h2 id="ability-name"></h2><p id="ability-text"></p></section>
-      <p id="inspection" role="status" hidden></p>
       <div id="choices" aria-label="一手の選択"></div>
-      <h2>棋譜</h2>
-      <p id="empty-history">まだ着手はありません。</p>
-      <ol id="recent" aria-label="棋譜"></ol>
-    </aside>
+    </section>
+    <div class="scroll"><div id="board" aria-label="広将棋の盤面"></div></div>
+    <div class="game-details">
+      <section class="panel" id="ability" aria-label="駒の解説">
+        <h2 id="ability-name">駒の解説</h2>
+        <p id="ability-text">駒を選ぶと能力を表示します。</p>
+      </section>
+      <section class="panel game-history" aria-labelledby="history-title">
+        <h2 id="history-title">棋譜</h2>
+        <div class="actions record-tools">
+          <button class="control" id="save-record" type="button" disabled>保存</button>
+          <button class="control" id="open-record" type="button" disabled>開く</button>
+          <input id="record-file" type="file" accept=".json,application/json" hidden>
+        </div>
+        <div id="replay-controls">
+          <div class="actions">
+            <button class="control" id="replay-return" type="button" disabled>棋譜を閉じる</button>
+          </div>
+          <p id="replay-position" role="status">棋譜を開くと再生できます。</p>
+          <input id="replay-slider" type="range" min="0" max="0" value="0" disabled aria-label="再生する手数">
+          <div class="actions record-tools">
+            <button class="control" id="replay-first" type="button" disabled aria-label="初期局面">|◀</button>
+            <button class="control" id="replay-prev" type="button" disabled aria-label="1手戻る">◀</button>
+            <button class="control" id="replay-play" type="button" disabled>自動再生</button>
+            <button class="control" id="replay-next" type="button" disabled aria-label="1手進む">▶</button>
+            <button class="control" id="replay-last" type="button" disabled aria-label="最終局面">▶|</button>
+          </div>
+        </div>
+        <p id="record-message" role="status"></p>
+        <p id="empty-history">まだ着手はありません。</p>
+        <ol id="recent" aria-label="棋譜"></ol>
+      </section>
+    </div>
   </div>
+  <dialog id="options-dialog" aria-labelledby="options-title">
+    <h2 id="options-title">オプション</h2>
+    <p><button class="control" id="sound" type="button" aria-pressed="true">着手音オン</button></p>
+    <form method="dialog" class="actions">
+      <button class="control" type="submit">閉じる</button>
+    </form>
+  </dialog>
+  <dialog id="new-game-dialog" aria-labelledby="new-game-title">
+    <form id="new-game-form">
+      <h2 id="new-game-title">新しい対局</h2>
+      <p id="replace-game-note" hidden>新しい対局を始めると、現在の棋譜は消えます。</p>
+      <label>対局相手
+        <select id="opponent" autofocus>
+          <option value="human">人</option>
+          <option value="search">AI</option>
+        </select>
+      </label>
+      <label id="toss-option" hidden>あなたの手番
+        <select id="side-choice">
+          <option value="black">先手</option>
+          <option value="white">後手</option>
+          <option value="toss">振り駒</option>
+        </select>
+      </label>
+      <p id="toss-result" role="status" hidden></p>
+      <div class="actions">
+        <button class="control" id="cancel-new-game" type="button">キャンセル</button>
+        <button class="control primary" id="start-game" type="submit">対局を始める</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="promotion-dialog" aria-labelledby="promotion-title">
+    <h2 id="promotion-title">成りを選択</h2>
+    <div id="promotion-linked"></div>
+    <div class="actions">
+      <button class="control primary" id="promote" type="button">成る</button>
+      <button class="control" id="decline-promotion" type="button">成らない</button>
+    </div>
+  </dialog>
+  <dialog id="resign-dialog" aria-labelledby="resign-title">
+    <form method="dialog">
+      <h2 id="resign-title">投了しますか？</h2>
+      <div class="actions">
+        <button class="control" type="submit" value="cancel" autofocus>キャンセル</button>
+        <button class="control danger" type="submit" value="resign">投了する</button>
+      </div>
+    </form>
+  </dialog>
 </main>
 <script>
   const files = [..."ABCDEFGHJKLMNOPQRST"];
   const board = document.querySelector("#board");
   const status = document.querySelector("#status");
-  const reset = document.querySelector("#reset");
+  const newGame = document.querySelector("#new-game");
+  const newGameDialog = document.querySelector("#new-game-dialog");
+  const newGameForm = document.querySelector("#new-game-form");
+  const replaceGameNote = document.querySelector("#replace-game-note");
   const opponent = document.querySelector("#opponent");
+  const tossOption = document.querySelector("#toss-option");
   let mode = "human";
   let humanSide = "black";
-  const toss = document.querySelector("#toss");
-  const undo = document.querySelector("#undo");
+  const sideChoice = document.querySelector("#side-choice");
   const tossResult = document.querySelector("#toss-result");
+  const startGame = document.querySelector("#start-game");
+  let tossSide;
+  const undo = document.querySelector("#undo");
+  const resign = document.querySelector("#resign");
+  const resignDialog = document.querySelector("#resign-dialog");
+  const resignTitle = document.querySelector("#resign-title");
+  let resignedSide;
+  let gameActive = false;
 
   function undoLength() {
     if (mode === "human") return Math.max(0, history.length - 1);
@@ -157,14 +275,12 @@
     千総: "縦横斜めに何路でも進める。",
     龍驤: "縦横斜めに何路でも、または周囲8方向に1路ずつ2回まで進める。",
     高道: "周囲8方向に2路跳ぶ。着地で取れるのは高道・神僧系。移動を終えた後、隣接する敵1枚を射撃対象として選べる。",
-    五里霧: "高道と同じ跳躍を一手に2回まで。移動を終えた後、隣接する敵1枚を射撃対象として選べる。周囲5路で敵の射撃を封じる。敵の聖燈が近づくと高道に戻る。",
-    神僧: "周囲8方向に2路跳ぶ。着地で取れるのは高道・神僧系。",
-    聖燈: "神僧の動きを一手に2回まで。8方向の5路以内にいる敵の五里霧を高道に戻す。"
+    五里霧: "高道と同じ跳躍を一手に2回まで。各移動の直後に、隣接する敵1枚を任意で射撃できる。射撃後も2回目の移動を続けられる。周囲5路で敵の射撃を封じる。敵の聖燈が近づくと高道に戻る。",
+    神僧: "周囲8方向に2路跳ぶ。着地で取れるのは高道・神僧系。移動を終えた後、隣接する敵1枚を射撃対象として選べる。",
+    聖燈: "神僧の動きを一手に2回まで。各移動の直後に、隣接する敵1枚を任意で射撃できる。射撃後も2回目の移動を続けられる。8方向の5路以内にいる敵の五里霧を高道に戻す。"
   };
-  const ability = document.querySelector("#ability");
   const abilityName = document.querySelector("#ability-name");
   const abilityText = document.querySelector("#ability-text");
-  const inspectionStatus = document.querySelector("#inspection");
   const emptyHistory = document.querySelector("#empty-history");
   const sound = document.querySelector("#sound");
   let inspected;
@@ -197,26 +313,103 @@
     noise.start(at);
   }
 
-  function playSound(move) {
-    if (!soundEnabled || audio?.state !== "running") return;
-    const now = audio.currentTime;
-    impact(now, .036, 2400, .28, "bandpass");
-    move.shots.forEach((_, index) => {
-      const at = now + .09 + index * .13;
-      impact(at, .105, 1250, .42, "lowpass");
+  const vehicles = new Set(["車", "車総", "砲車", "神機車"]);
+  const shields = new Set(["牌", "牌総", "天塁"]);
+  const cavalry = new Set(["馬兵", "騎総", "天馬", "彍騎", "弩騎"]);
+  const runners = new Set([
+    "歩総", "都司", "先鋒", "象", "招揺", "霹靂", "百総", "把総", "千戸", "百戸",
+    "副司", "前衝", "後衝", "天網", "地網", "鷹揚", "虎翼", "千総", "龍驤"
+  ]);
+  const bows = new Set(["弓", "弩", "彍騎", "弩騎"]);
+  const cannons = new Set(["砲", "砲車", "仏狼機", "神機車"]);
 
-      const thump = audio.createOscillator();
-      const volume = audio.createGain();
-      thump.frequency.setValueAtTime(150, at);
-      thump.frequency.exponentialRampToValueAtTime(65, at + .065);
-      volume.gain.setValueAtTime(.001, at);
-      volume.gain.exponentialRampToValueAtTime(.15, at + .003);
-      volume.gain.exponentialRampToValueAtTime(.001, at + .075);
-      thump.connect(volume).connect(audio.destination);
-      thump.start(at);
-      thump.stop(at + .08);
-    });
+  function tone(at, duration, start, end, gain, type = "triangle") {
+    const oscillator = audio.createOscillator();
+    const volume = audio.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(start, at);
+    oscillator.frequency.exponentialRampToValueAtTime(end, at + duration);
+    volume.gain.setValueAtTime(.001, at);
+    volume.gain.exponentialRampToValueAtTime(gain, at + .003);
+    volume.gain.exponentialRampToValueAtTime(.001, at + duration);
+    oscillator.connect(volume).connect(audio.destination);
+    oscillator.start(at);
+    oscillator.stop(at + duration);
   }
+
+  function movementSound(at, name) {
+    if (vehicles.has(name)) {
+      const squeaks = [[0, 2450], [.070, 2870], [.150, 2310], [.230, 2750], [.320, 2500]];
+      for (const [offset, pitch] of squeaks) {
+        const tick = at + offset;
+        impact(tick, .037, pitch, .19, "bandpass");
+        tone(tick, .030, pitch, pitch * .65, .054, "sine");
+        tone(tick + .002, .024, pitch * 1.43, pitch * .91, .031, "sine");
+      }
+      return .36;
+    }
+    if (shields.has(name)) {
+      impact(at, .024, 3600, .24, "bandpass");
+      tone(at, .11, 1430, 1430, .12, "sine");
+      tone(at, .08, 2210, 2210, .05, "sine");
+      return .11;
+    }
+    if (cavalry.has(name)) {
+      for (const offset of [0, .085, .16, .45, .535, .61]) {
+        impact(at + offset, .030, 850, .25, "bandpass");
+        tone(at + offset, .033, 245, 105, .10);
+      }
+      return .65;
+    }
+    if (runners.has(name)) {
+      for (const offset of [0, .30, .60]) {
+        impact(at + offset, .033, 1450, .28, "bandpass");
+      }
+      return .64;
+    }
+    impact(at, .075, 2100, .30, "bandpass");
+    return .075;
+  }
+
+  function bowRelease(at) {
+    const rate = audio.sampleRate;
+    const buffer = audio.createBuffer(1, Math.round(rate * .13), rate);
+    const samples = buffer.getChannelData(0);
+    const period = Math.round(rate / 260);
+    // A short impulse excites the string; each cycle loses its upper harmonics.
+    for (let i = 0; i < period; i++) {
+      samples[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * i / period);
+    }
+    for (let i = period; i < samples.length; i++) {
+      samples[i] = .89 * (samples[i - period] + samples[i - period + 1]) / 2;
+    }
+    for (let i = 0; i < samples.length; i++) {
+      samples[i] *= .36 * (1 - i / (samples.length - 1));
+    }
+    const release = audio.createBufferSource();
+    release.buffer = buffer;
+    release.connect(audio.destination);
+    release.start(at);
+  }
+
+  function playSound(move, name) {
+    if (!soundEnabled || audio?.state !== "running") return;
+    const at = audio.currentTime;
+    if (!move.shots.length) {
+      movementSound(at, name);
+      return;
+    }
+    if (bows.has(name)) {
+      bowRelease(at);
+    } else if (cannons.has(name)) {
+      impact(at, .105, 950, .34, "lowpass");
+    } else {
+      impact(at, .065, 1500, .28, "bandpass");
+    }
+  }
+
+  const optionsDialog = document.querySelector("#options-dialog");
+  document.querySelector("#options").addEventListener("click", () => optionsDialog.showModal());
 
   sound.addEventListener("click", () => {
     soundEnabled = !soundEnabled;
@@ -225,23 +418,37 @@
     unlockAudio();
   });
 
-  function record(move, before) {
+  function moveSequence(move) {
+    const shotSteps = move.shot_steps?.length ? move.shot_steps : move.shots.map(() => move.path.length);
+    return move.path.flatMap((square, index) => [
+      {kind: "move", square},
+      ...move.shots.flatMap((target, shot) => shotSteps[shot] === index + 1 ? [{kind: "shoot", square: target}] : [])
+    ]);
+  }
+
+  function actionSequence(action) {
+    return action.sequence ?? moveSequence(action);
+  }
+
+  function record(move, before, quiet = false) {
     const piece = before.pieces[move.from];
     const player = mode !== "human" && piece.side !== humanSide ? "AI（" + (piece.side === "black" ? "黒" : "白") + "）" : sideName(piece.side);
-    const route = [move.from, ...move.path].join(" → ");
-    const shot = move.shots.length ? " ／ 射撃 " + move.shots.join("、") : "";
+    const route = moveSequence(move).reduce((text, event) =>
+      text + (event.kind === "move" ? " → " : " ／ 射撃 ") + event.square, move.from);
     const promotion = move.promote ? " ／ 成り" : "";
     const linked = move.linked?.length ? " ／ 連動して成る " + move.linked.join("、") : "";
     const item = document.createElement("li");
-    item.textContent = player + " " + piece.name + " " + route + shot + promotion + linked;
+    item.textContent = player + " " + piece.name + " " + route + promotion + linked;
     recentList.append(item);
     recentList.scrollTop = recentList.scrollHeight;
     recent.push(move);
-    playSound(move);
+    if (!quiet) playSound(move, piece.name);
   }
   let selected;
   let path = [];
   let shots = [];
+  let shotSteps = [];
+  let sequence = [];
   let stage = "move";
   const choices = document.querySelector("#choices");
 
@@ -250,28 +457,24 @@
     inspected = undefined;
     path = [];
     shots = [];
+    shotSteps = [];
+    sequence = [];
     stage = "move";
-  }
-
-  function matches(sequence, prefix) {
-    return prefix.every((coordinate, index) => sequence[index] === coordinate);
   }
 
   function available() {
     return (current.moves[selected] ?? []).filter(action =>
-      matches(action.path, path) && matches(action.shots, shots) &&
-      (stage === "move" || action.path.length === path.length));
+      sequence.every((event, index) => actionSequence(action)[index]?.kind === event.kind &&
+        actionSequence(action)[index]?.square === event.square));
   }
 
-  function nextSquares() {
-    return new Set(available().map(action =>
-      stage === "move" ? action.path[path.length] : action.shots[shots.length]
-    ).filter(Boolean));
+  function nextSquares(kind = stage) {
+    return new Set(available().map(action => actionSequence(action)[sequence.length])
+      .filter(event => event?.kind === kind).map(event => event.square));
   }
 
   function completeAction() {
-    return available().find(action =>
-      action.path.length === path.length && action.shots.length === shots.length);
+    return available().find(action => actionSequence(action).length === sequence.length);
   }
 
   function button(label, callback) {
@@ -283,8 +486,22 @@
   }
 
   function play(promote, linked = []) {
-    load([...history, {from: selected, path, shots, promote, linked}]);
+    load([...history, {from: selected, path, shots, shot_steps: shotSteps, promote, linked}]);
   }
+
+  const promotionDialog = document.querySelector("#promotion-dialog");
+  const promotionLinked = document.querySelector("#promotion-linked");
+  const promote = document.querySelector("#promote");
+  promotionDialog.addEventListener("cancel", event => event.preventDefault());
+  promote.addEventListener("click", () => {
+    const linked = [...promotionLinked.querySelectorAll("input:checked")].map(input => input.value);
+    promotionDialog.close();
+    play(true, linked);
+  });
+  document.querySelector("#decline-promotion").addEventListener("click", () => {
+    promotionDialog.close();
+    play(false);
+  });
 
   function finishAction() {
     if (completeAction().promotion) {
@@ -296,11 +513,12 @@
   }
 
   function afterStep() {
-    if (nextSquares().size) {
-      draw();
-    } else if (stage === "move") {
+    if (nextSquares("shoot").size) {
       stage = "shoot";
-      afterStep();
+      draw();
+    } else if (nextSquares("move").size) {
+      stage = "move";
+      draw();
     } else {
       finishAction();
     }
@@ -337,6 +555,11 @@
   }
 
   buildBoard(false);
+  const layout = document.querySelector(".layout");
+  const boardSizeObserver = new ResizeObserver(() => {
+    layout.style.setProperty("--board-height", board.getBoundingClientRect().height + "px");
+  });
+  boardSizeObserver.observe(board);
 
   function sideName(side) {
     return side === "black" ? "先手（黒）" : "後手（白）";
@@ -346,21 +569,13 @@
     const last = recent.at(-1);
     emptyHistory.hidden = recentList.childElementCount > 0;
     const inspectedPiece = current.pieces[inspected];
-    ability.hidden = !inspectedPiece;
-    if (inspectedPiece) {
-      abilityName.textContent = inspectedPiece.name;
-      abilityText.textContent = abilities[inspectedPiece.name] ?? "能力説明は準備中です。";
-    }
+    abilityName.textContent = inspectedPiece?.name ?? "駒の解説";
+    const explanation = inspectedPiece
+      ? abilities[inspectedPiece.name] ?? "能力説明は準備中です。"
+      : "駒を選ぶと能力を表示します。";
+    abilityText.textContent = explanation.replace(/。(?=.)/g, "。\n");
     const preview = current.inspections?.[inspected];
     const showInspection = inspectedPiece && preview && !path.length;
-    inspectionStatus.hidden = !showInspection;
-    if (showInspection) {
-      const steps = preview.steps.join("、") || "なし";
-      const shots = preview.shots.join("、");
-      inspectionStatus.textContent = sideName(inspectedPiece.side) + " " +
-        inspectedPiece.name + " " + inspected + " ／ 最初の移動先 " + steps +
-        (shots ? " ／ 移動後に射撃できる対象 " + shots : "");
-    }
     const destinations = stage === "promotion" ? new Set() : nextSquares();
     const completed = completeAction();
     const pieces = {...current.pieces};
@@ -372,8 +587,22 @@
       }
     }
     choices.replaceChildren();
-    if (current.winner) {
+    if (replay) {
+      const atEnd = replay.index === replay.record.history.length;
+      const ending = current.winner ? sideName(current.winner) + "の勝ち。" :
+        atEnd && replay.record.resignedSide ? sideName(replay.record.resignedSide) + "が投了。" :
+        atEnd && replay.record.endReason === "ply_limit" ? "手数上限で打ち切り（未決着）。" :
+        atEnd && replay.record.endReason === "no_legal_move" ? "合法手がなく終了。" : sideName(current.turn) + "の手番。";
+      status.textContent = "棋譜再生中 — " + ending;
+    } else if (resignedSide) {
+      const winner = resignedSide === "black" ? "white" : "black";
+      status.textContent = sideName(resignedSide) + "が投了。" + sideName(winner) + "の勝ち。";
+    } else if (current.winner) {
       status.textContent = sideName(current.winner) + "の勝ち。対局終了。";
+    } else if (!gameActive) {
+      status.textContent = history.length
+        ? "対局終了。「新しい対局」で次の対局を始められます。"
+        : "対局前です。「新しい対局」で始めてください。";
     } else if (thinking) {
       status.textContent = "AIが考え中…";
     } else if (mode !== "human" && current.turn !== humanSide) {
@@ -384,28 +613,35 @@
         shoot: "射撃対象を選んでください。",
         promotion: "成るか選んでください。"
       };
-      status.textContent = sideName(current.turn) + "の手番。 " + prompt[stage];
+      const doublePriest = ["聖燈", "五里霧"].includes(current.pieces[selected]?.name);
+      const noShot = doublePriest && path.length && stage === "move" && !shotSteps.includes(path.length) && !nextSquares("shoot").size;
+      status.textContent = sideName(current.turn) + "の手番。 " +
+        (noShot ? "射撃できる敵駒はありません。次の移動先を選ぶか、この位置で手を終えてください。" : prompt[stage]);
     }
     if (stage === "move" && completed) {
-      button("この位置で移動を終える", () => { stage = "shoot"; afterStep(); });
+      button("この位置で手を終える", finishAction);
     }
     if (stage === "shoot" && completed) {
-      button(shots.length ? "射撃を終える" : "射撃しない", finishAction);
+      button(nextSquares("move").size ? "この位置で手を終える" :
+        (shots.length ? "射撃を終える" : "射撃しない"), finishAction);
     }
-    if (stage === "promotion") {
-      const linked = completed.linked.map(coordinate => {
+    if (stage === "shoot" && nextSquares("move").size) {
+      button("射撃しないで移動を続ける", () => { stage = "move"; draw(); });
+    }
+    if (stage === "promotion" && !promotionDialog.open) {
+      promotionLinked.replaceChildren();
+      for (const coordinate of completed.linked) {
         const option = document.createElement("label");
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
+        checkbox.value = coordinate;
         option.append(checkbox, coordinate + "の" + pieces[coordinate].name + "も成る");
-        choices.append(option);
-        return {coordinate, checkbox};
-      });
-      button(completed.promotion + "に成る", () =>
-        play(true, linked.filter(item => item.checkbox.checked).map(item => item.coordinate)));
-      button("成らない", () => play(false));
+        promotionLinked.append(option);
+      }
+      promote.textContent = completed.promotion + "に成る";
+      promotionDialog.showModal();
     }
-    if (path.length) button("選択を取り消す", () => { clearSelection(); draw(); });
+    if (path.length && stage !== "promotion") button("選択を取り消す", () => { clearSelection(); draw(); });
     for (const [coordinate, cell] of cells) {
       const piece = pieces[coordinate];
       const destination = destinations.has(coordinate);
@@ -436,7 +672,7 @@
   let requestId = 0;
   const pending = new Map();
 
-  function browserPosition(history, opponent) {
+  function browserPosition(history, opponent, operation = "position") {
     if (!engine) {
       engine = new Worker(new URL("./static_worker.mjs", document.baseURI), {type: "module"});
       engine.onmessage = ({data: {id, state, error}}) => {
@@ -455,7 +691,7 @@
     return new Promise((resolve, reject) => {
       const id = ++requestId;
       pending.set(id, {resolve, reject});
-      engine.postMessage({id, history, opponent: opponent === "human" ? "" : opponent, humanSide});
+      engine.postMessage({id, history, operation, opponent: opponent === "human" ? "" : opponent, humanSide});
     });
   }
 
@@ -469,17 +705,37 @@
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(moves)
     });
-    if (!response.ok) throw new Error();
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || "HTTP " + response.status);
+    }
     return response.json();
   }
 
-  async function load(nextHistory, nextMode = mode, retryAI = false, nextSide = humanSide, tossText = "") {
+  function updateGameActions() {
+    newGame.disabled = busy || gameActive;
+    const hasRecord = replay
+      ? replay.record.history.length > 0 || Boolean(replay.record.resignedSide)
+      : history.length > 0 || Boolean(resignedSide || current?.winner);
+    document.querySelector("#save-record").disabled = busy || !hasRecord;
+    document.querySelector("#open-record").disabled = busy || gameActive;
+    for (const control of replayControls.querySelectorAll("button, input")) control.disabled = busy || !replay;
+    if (replay && !busy) {
+      document.querySelector("#replay-first").disabled = replay.index === 0;
+      document.querySelector("#replay-prev").disabled = replay.index === 0;
+      document.querySelector("#replay-next").disabled = replay.index === replay.record.history.length;
+      document.querySelector("#replay-last").disabled = replay.index === replay.record.history.length;
+      replayPlay.disabled = replay.record.history.length === 0;
+    }
+    const opening = mode !== "human" && humanSide === "white" ? 1 : 0;
+    undo.disabled = busy || !gameActive || Boolean(replay) || Boolean(resignedSide) || history.length <= opening;
+    resign.disabled = busy || !gameActive || Boolean(replay) || !current || Boolean(current.winner || resignedSide);
+  }
+
+  async function load(nextHistory, nextMode = mode, retryAI = false, nextSide = humanSide, startMatch = false) {
     if (busy) return;
     busy = true;
-    reset.disabled = true;
-    opponent.disabled = true;
-    undo.disabled = true;
-    toss.disabled = true;
+    updateGameActions();
     let awaitingAI = retryAI;
     try {
       if (!retryAI) {
@@ -488,7 +744,6 @@
         if ((mode !== "human" && humanSide === "black") !== blackAtBottom) {
           buildBoard(blackAtBottom);
         }
-        if (nextMode !== mode || nextSide !== humanSide) tossResult.hidden = true;
         mode = nextMode;
         humanSide = nextSide;
         if (!nextHistory.length || nextHistory.length < history.length) {
@@ -497,17 +752,13 @@
             recentList.lastElementChild.remove();
           }
         } else record(nextHistory.at(-1), current);
-        if (!nextHistory.length && !tossText && nextMode === "human") {
-          tossResult.hidden = true;
-        }
-        if (tossText) {
-          tossResult.textContent = tossText;
-          tossResult.hidden = false;
-        }
+        resignedSide = undefined;
         current = response;
         history = nextHistory;
+        if (startMatch) gameActive = true;
+        if (current.winner || !Object.values(current.moves).some(actions => actions.length)) gameActive = false;
         clearSelection();
-        awaitingAI = mode !== "human" && current.turn !== humanSide && !current.winner;
+        awaitingAI = gameActive && mode !== "human" && current.turn !== humanSide && !current.winner;
       }
       draw(awaitingAI);
       if (awaitingAI) {
@@ -519,48 +770,228 @@
           history = [...history, response.aiMove];
         }
         current = response;
+        if (current.winner || !Object.values(current.moves).some(actions => actions.length)) gameActive = false;
         draw();
       }
-    } catch {
-      status.textContent = "盤面を更新できませんでした。もう一度操作してください。";
+    } catch (error) {
+      status.textContent = "盤面を更新できませんでした。" + error.message;
+      const failed = nextHistory.at(-1);
+      if (failed && nextHistory.length > history.length) {
+        status.textContent += "（" + failed.from + " → " + failed.path.join(" → ") +
+          (failed.shots.length ? " ／ 射撃 " + failed.shots.join("、") : "") + "）";
+      }
       if (awaitingAI) button("AIの手を再試行", () => load(history, mode, true));
     } finally {
       busy = false;
-      reset.disabled = false;
-      opponent.disabled = false;
-      opponent.value = mode;
-      toss.disabled = mode === "human" || !current;
-      const opening = mode !== "human" && humanSide === "white" ? 1 : 0;
-      undo.disabled = history.length <= opening;
+      updateGameActions();
     }
   }
 
   function select(coordinate) {
     if (!current || busy || stage === "promotion") return;
     unlockAudio();
-    if (nextSquares().has(coordinate)) {
+    if (gameActive && !replay && nextSquares().has(coordinate)) {
       if (stage === "move") path = [...path, coordinate];
-      else shots = [...shots, coordinate];
+      else {
+        shots = [...shots, coordinate];
+        shotSteps = [...shotSteps, path.length];
+      }
+      sequence = [...sequence, {kind: stage, square: coordinate}];
       afterStep();
       return;
     }
     if (path.length) return;
     const piece = current.pieces[coordinate];
     inspected = piece && inspected !== coordinate ? coordinate : undefined;
-    const canMove = !current.winner && (mode === "human" || current.turn === humanSide);
+    const canMove = gameActive && !replay && !resignedSide && !current.winner && (mode === "human" || current.turn === humanSide);
     selected = inspected && canMove && piece.side === current.turn ? inspected : undefined;
     draw();
   }
 
-  opponent.addEventListener("change", () => load([], opponent.value, false, "black"));
-  undo.addEventListener("click", () => load(history.slice(0, undoLength())));
-  toss.addEventListener("click", () => {
-    unlockAudio();
-    const faces = Array.from({length: 5}, () => Math.random() < .5 ? "歩" : "と");
-    const side = faces.filter(face => face === "歩").length >= 3 ? "black" : "white";
-    load([], mode, false, side, "振り駒 " + faces.join(" ") + " ／ あなたは" + sideName(side));
+  function resetTossResult() {
+    tossOption.hidden = opponent.value === "human";
+    tossSide = undefined;
+    tossResult.hidden = true;
+    tossResult.textContent = "";
+    startGame.textContent = !tossOption.hidden && sideChoice.value === "toss" ? "振り駒をする" : "対局を始める";
+  }
+
+  newGame.addEventListener("click", () => {
+    if (busy || gameActive) return;
+    opponent.value = liveGame?.mode ?? mode;
+    sideChoice.value = "black";
+    replaceGameNote.hidden = history.length === 0;
+    resetTossResult();
+    newGameDialog.showModal();
   });
-  reset.addEventListener("click", () => load([]));
+  opponent.addEventListener("change", resetTossResult);
+  sideChoice.addEventListener("change", resetTossResult);
+  document.querySelector("#cancel-new-game").addEventListener("click", () => newGameDialog.close());
+  newGameForm.addEventListener("submit", event => {
+    event.preventDefault();
+    if (busy || gameActive) return;
+    const nextMode = opponent.value;
+    if (nextMode !== "human" && sideChoice.value === "toss" && !tossSide) {
+      const faces = Array.from({length: 5}, () => Math.random() < .5 ? "歩" : "と");
+      tossSide = faces.filter(face => face === "歩").length >= 3 ? "black" : "white";
+      tossResult.hidden = false;
+      tossResult.textContent = "振り駒の結果：あなたは" + sideName(tossSide) + "です。";
+      startGame.textContent = "対局を始める";
+      return;
+    }
+    newGameDialog.close();
+    if (tossSide) unlockAudio();
+    if (replay) leaveReplay();
+    const nextSide = nextMode === "human" ? "black" : sideChoice.value === "toss" ? tossSide : sideChoice.value;
+    load([], nextMode, false, nextSide, true);
+  });
+  undo.addEventListener("click", () => load(history.slice(0, undoLength())));
+
+  function sideToResign() {
+    return mode === "human" ? current.turn : humanSide;
+  }
+
+  resign.addEventListener("click", () => {
+    resignTitle.textContent = sideName(sideToResign()) + "が投了しますか？";
+    resignDialog.returnValue = "";
+    resignDialog.showModal();
+  });
+  resignDialog.addEventListener("close", () => {
+    if (resignDialog.returnValue !== "resign") return;
+    if (!gameActive || replay || busy) return;
+    resignedSide = sideToResign();
+    gameActive = false;
+    clearSelection();
+    draw();
+    updateGameActions();
+    newGame.focus();
+  });
+  let replay;
+  let liveGame;
+  let replayTimer;
+  const replayControls = document.querySelector("#replay-controls");
+  const replaySlider = document.querySelector("#replay-slider");
+  const replayPlay = document.querySelector("#replay-play");
+  const recordMessage = document.querySelector("#record-message");
+
+  function savedRecord() {
+    return replay?.record ?? {
+      format: "koushougi-kifu", version: 1, title: "広将棋 " + new Date().toLocaleString("ja-JP"),
+      history, opponent: mode, humanSide, resignedSide: resignedSide ?? null
+    };
+  }
+  function pauseReplay() {
+    clearInterval(replayTimer);
+    replayTimer = undefined;
+    replayPlay.textContent = "自動再生";
+  }
+  function showReplay(index) {
+    if (!replay) return;
+    replay.index = Math.max(0, Math.min(replay.record.history.length, index));
+    current = replay.frames[replay.index];
+    recent = replay.record.history.slice(0, replay.index);
+    clearSelection();
+    replaySlider.value = replay.index;
+    document.querySelector("#replay-position").textContent = replay.index + " / " + replay.record.history.length + " 手";
+    for (const [i, item] of [...recentList.children].entries()) {
+      if (i === replay.index - 1) item.setAttribute("aria-current", "step");
+      else item.removeAttribute("aria-current");
+    }
+    recentList.children[replay.index - 1]?.scrollIntoView({block: "nearest"});
+    if (replay.index === replay.record.history.length) pauseReplay();
+    draw();
+    updateGameActions();
+  }
+  async function enterReplay(input) {
+    if (busy || gameActive) return;
+    pauseReplay();
+    busy = true;
+    updateGameActions();
+    recordMessage.textContent = "棋譜を読み込み中…";
+    try {
+      const data = await input;
+      let result;
+      if (document.documentElement.dataset.engine === "browser") result = await browserPosition(data, "human", "record");
+      else {
+        const response = await fetch("/record", {
+          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data)
+        });
+        result = await response.json();
+        if (!response.ok) throw new Error(result.error || "棋譜を読み込めません");
+      }
+      if (!liveGame) liveGame = {current, mode, humanSide, resignedSide, gameActive, recent, items: [...recentList.children]};
+      replay = {...result, index: 0};
+      mode = result.record.opponent;
+      humanSide = result.record.humanSide;
+      resignedSide = undefined;
+      buildBoard(mode !== "human" && humanSide === "black");
+      recent = [];
+      recentList.replaceChildren();
+      result.record.history.forEach((move, index) => {
+        record(move, result.frames[index], true);
+        const item = recentList.lastElementChild;
+        const link = document.createElement("button");
+        link.type = "button";
+        link.textContent = item.textContent;
+        link.addEventListener("click", () => { pauseReplay(); showReplay(index + 1); });
+        item.replaceChildren(link);
+      });
+      replaySlider.max = result.record.history.length;
+      recordMessage.textContent = result.record.title + (result.record.note ? "\n" + result.record.note : "");
+      showReplay(0);
+    } catch (error) {
+      recordMessage.textContent = "棋譜を開けませんでした。" + (error instanceof SyntaxError ? "JSON形式を確認してください。" : error.message);
+    } finally {
+      busy = false;
+      updateGameActions();
+    }
+  }
+  function leaveReplay() {
+    if (!liveGame) return;
+    pauseReplay();
+    ({current, mode, humanSide, resignedSide, gameActive, recent} = liveGame);
+    recentList.replaceChildren(...liveGame.items);
+    liveGame = undefined;
+    replay = undefined;
+    replaySlider.max = 0;
+    replaySlider.value = 0;
+    document.querySelector("#replay-position").textContent = "棋譜を開くと再生できます。";
+    recordMessage.textContent = "";
+    buildBoard(mode !== "human" && humanSide === "black");
+    clearSelection();
+    draw();
+    updateGameActions();
+  }
+  document.querySelector("#save-record").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(savedRecord(), null, 2)], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "koushougi-" + new Date().toISOString().replace(/[:.]/g, "-") + ".json";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  document.querySelector("#replay-return").addEventListener("click", leaveReplay);
+  const recordFile = document.querySelector("#record-file");
+  document.querySelector("#open-record").addEventListener("click", () => recordFile.click());
+  recordFile.addEventListener("change", () => {
+    const file = recordFile.files[0];
+    recordFile.value = "";
+    if (!file || busy || gameActive) return;
+    if (file.size > 2 * 1024 * 1024) { recordMessage.textContent = "棋譜ファイルは2MB以内にしてください。"; return; }
+    enterReplay(file.text().then(JSON.parse));
+  });
+  for (const [id, destination] of [
+    ["first", () => 0], ["prev", () => replay.index - 1],
+    ["next", () => replay.index + 1], ["last", () => replay.record.history.length]
+  ]) document.querySelector("#replay-" + id).addEventListener("click", () => { pauseReplay(); showReplay(destination()); });
+  replaySlider.addEventListener("input", () => { pauseReplay(); showReplay(Number(replaySlider.value)); });
+  replayPlay.addEventListener("click", () => {
+    if (replayTimer) return pauseReplay();
+    if (replay.index === replay.record.history.length) showReplay(0);
+    replayPlay.textContent = "一時停止";
+    replayTimer = setInterval(() => showReplay(replay.index + 1), 800);
+  });
   load([]);
 </script>
 </html>

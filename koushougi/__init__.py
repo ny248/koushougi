@@ -1,6 +1,7 @@
 """広将棋の初期配置と代表的な手を検証するエンジン。"""
 
 from dataclasses import dataclass
+from functools import cache
 
 FILES = "ABCDEFGHJKLMNOPQRST"
 ORTHOGONAL = ((1, 0), (-1, 0), (0, 1), (0, -1))
@@ -35,6 +36,18 @@ class Action:
     origin: Square
     path: tuple[Square, ...]
     shots: tuple[Square, ...] = ()
+    # 射撃する時点を移動回数で表す。省略時は従来どおり全移動の後に射撃する。
+    shot_steps: tuple[int, ...] = ()
+
+    def __post_init__(self):
+        if self.shot_steps:
+            if (len(self.shot_steps) != len(self.shots)
+                    or any(type(step) is not int or not 1 <= step <= len(self.path)
+                           for step in self.shot_steps)
+                    or tuple(sorted(self.shot_steps)) != self.shot_steps):
+                raise ValueError("射撃する移動段階が不正です")
+            if all(step == len(self.path) for step in self.shot_steps):
+                object.__setattr__(self, "shot_steps", ())
 
 
 def square(label: str) -> Square:
@@ -88,6 +101,7 @@ ARROW_IMMUNE = SHIELDS | {"牌", "車", "車総", "砲車"}
 
 
 PRIESTS = {"高道", "五里霧", "神僧", "聖燈"}
+DOUBLE_PRIESTS = {"五里霧", "聖燈"}
 DOUBLE_DIRECTIONS = tuple((2*x, 2*y) for x, y in DIRECTIONS)
 DOUBLE_ORTHOGONAL = DOUBLE_DIRECTIONS[:4]
 DOUBLE_DIAGONAL = DOUBLE_DIRECTIONS[4:]
@@ -99,9 +113,22 @@ def distance(a, b):
 
 def settle(board):
     """強制的に元の駒へ戻る効果を適用する。"""
-    high_priests = {p.side for p in board.values() if p.name in {"高道", "五里霧"}}
-    lamps = [(cell, p.side) for cell, p in board.items() if p.name == "聖燈"]
-    for cell, piece in board.items():
+    locations = getattr(board, "special_squares", None)
+    if locations is None:
+        affected = [(cell, piece) for cell, piece in board.items()
+                    if piece.name in {"招揺", "霹靂", "五里霧"}]
+    else:
+        affected = [(cell, board[cell]) for name in ("招揺", "霹靂", "五里霧")
+                    for cell in locations[name]]
+    if not affected:
+        return
+    if locations is None:
+        high_priests = {p.side for p in board.values() if p.name in {"高道", "五里霧"}}
+        lamps = [(cell, p.side) for cell, p in board.items() if p.name == "聖燈"]
+    else:
+        high_priests = {board[cell].side for name in ("高道", "五里霧") for cell in locations[name]}
+        lamps = [(cell, board[cell].side) for cell in locations["聖燈"]]
+    for cell, piece in affected:
         if piece.name in {"招揺", "霹靂"} and piece.side not in high_priests:
             board[cell] = Piece(piece.side, {"招揺": "旗", "霹靂": "鼓"}[piece.name])
         elif piece.name == "五里霧" and any(
@@ -124,22 +151,28 @@ def land(board, origin, target, captures):
         for ray in _rays(target, DIRECTIONS, 1):
             if ray and ray[0] in board:
                 captures.append(board.pop(ray[0]))
-    elif any(p.name == "毒火" and distance(target, cell) == 1
-             for cell, p in board.items()):
-        captures.append(board.pop(target))
+    else:
+        x, y = target
+        for dx, dy in DIRECTIONS:
+            neighbor = board.get((x + dx, y + dy))
+            if neighbor is not None and neighbor.name == "毒火":
+                captures.append(board.pop(target))
+                break
     settle(board)
 
 
 def _shots(board, origin, piece):
     kind = SHOT_KIND.get(piece.name)
     if kind is None:
-        if piece.name in {"高道", "五里霧"}:
+        if piece.name in PRIESTS:
             for ray in _rays(origin, DIRECTIONS, 1):
                 if ray and ray[0] in board and board[ray[0]].side != piece.side:
                     yield (ray[0],)
         return
+    locations = getattr(board, "special_squares", None)
+    fog = board.items() if locations is None else ((cell, board[cell]) for cell in locations["五里霧"])
     if any(p.name == "五里霧" and p.side != piece.side and distance(cell, origin) <= 5
-           for cell, p in board.items()):
+           for cell, p in fog):
         return
     immune = ARROW_IMMUNE if kind in {"弓", "弩"} else SHIELDS
     if kind != "仏狼機":
@@ -155,8 +188,9 @@ def _shots(board, origin, piece):
                 break
 
 
-def _paths(board, origin, piece):
-    front = (0, 1 if piece.side == "white" else -1)
+@cache
+def _movement_patterns(side):
+    front = (0, 1 if side == "white" else -1)
     back = (0, -front[1])
     horizontal = ((1, 0), (-1, 0))
     vertical = (front, back)
@@ -217,18 +251,24 @@ def _paths(board, origin, piece):
         "龍驤": ((DIRECTIONS, 18),),
         **{name: ((DOUBLE_DIRECTIONS, 1),) for name in PRIESTS},
     })
-    if piece.name in SHOT_RANGE:
-        patterns[piece.name] = ((DIAGONAL, 1),)
+    patterns.update({name: ((DIAGONAL, 1),) for name in SHOT_RANGE})
+    return patterns
+
+
+REPEAT_STEPS = {
+    "天馬": (KNIGHT, 2), "力士": (DIRECTIONS, 2), "龍驤": (DIRECTIONS, 2),
+    "霹靂": (ORTHOGONAL, 5), "鷹揚": (ORTHOGONAL, 2), "虎翼": (DIAGONAL, 2),
+    "軍師": (DIAGONAL + DOUBLE_ORTHOGONAL, 2),
+    "旗鼓": (ORTHOGONAL + DOUBLE_DIAGONAL, 2),
+    "五里霧": (DOUBLE_DIRECTIONS, 2), "聖燈": (DOUBLE_DIRECTIONS, 2),
+}
+
+
+def _paths(board, origin, piece):
+    front = (0, 1 if piece.side == "white" else -1)
+    patterns = _movement_patterns(piece.side)
     if piece.name not in patterns:
         raise NotImplementedError(piece.name)
-
-    repeat = {
-        "天馬": (KNIGHT, 2), "力士": (DIRECTIONS, 2), "龍驤": (DIRECTIONS, 2),
-        "霹靂": (ORTHOGONAL, 5), "鷹揚": (ORTHOGONAL, 2), "虎翼": (DIAGONAL, 2),
-        "軍師": (DIAGONAL + DOUBLE_ORTHOGONAL, 2),
-        "旗鼓": (ORTHOGONAL + DOUBLE_DIAGONAL, 2),
-        "五里霧": (DOUBLE_DIRECTIONS, 2), "聖燈": (DOUBLE_DIRECTIONS, 2),
-    }
 
     def can_land(position, cell):
         occupant = position.get(cell)
@@ -260,7 +300,8 @@ def _paths(board, origin, piece):
                 if moved.get(target) == piece:
                     yield from extend(moved, next_path, steps, offset or bool(captures), remaining - 1)
 
-    drum = any(p.side == piece.side and p.name in {"鼓", "霹靂"} for p in board.values())
+    drum = piece.name == "歩兵" and any(
+        p.side == piece.side and p.name in {"鼓", "霹靂"} for p in board.values())
     for directions, limit in patterns[piece.name]:
         if piece.name == "歩兵" and not drum:
             directions = tuple(direction for direction in directions if direction != front)
@@ -276,7 +317,7 @@ def _paths(board, origin, piece):
                     continue
                 yield (target,)
                 delta = target[0] - origin[0], target[1] - origin[1]
-                steps, count = repeat.get(piece.name, ((), 1))
+                steps, count = REPEAT_STEPS.get(piece.name, ((), 1))
                 if piece.name == "騎総":
                     # 2路進んだ軸は向きを保ち、1路進む軸は左右を選べる。
                     dx, dy = delta
@@ -292,14 +333,40 @@ def _paths(board, origin, piece):
                     break
 
 
+def _priest_actions(board, origin, piece):
+    def extend(position, current, path, shots, shot_steps, remaining):
+        for step in _paths(position, current, piece):
+            if len(step) != 1:
+                continue
+            target = step[0]
+            moved, _ = resolve_movement(position, Action(current, step))
+            next_path = (*path, target)
+            options = [(moved, shots, shot_steps)]
+            shooter = moved.get(target)
+            if shooter is not None:
+                for (victim,) in _shots(moved, target, shooter):
+                    after_shot = moved.copy()
+                    del after_shot[victim]
+                    settle(after_shot)
+                    options.append((after_shot, (*shots, victim), (*shot_steps, len(next_path))))
+            for result, next_shots, next_shot_steps in options:
+                yield Action(origin, next_path, next_shots, next_shot_steps)
+                if remaining > 1 and result.get(target) == piece:
+                    yield from extend(result, target, next_path, next_shots, next_shot_steps, remaining - 1)
+
+    yield from extend(board, origin, (), (), (), 2 if piece.name in DOUBLE_PRIESTS else 1)
+
+
 def movement_actions(board: dict[Square, Piece], origin: Square) -> tuple[Action, ...]:
     """指定駒の移動経路と射撃を列挙する。"""
     piece = board[origin]
+    if piece.name in PRIESTS:
+        return tuple(dict.fromkeys(_priest_actions(board, origin, piece)))
     actions = []
     for path in _paths(board, origin, piece):
         base = Action(origin, path)
         actions.append(base)
-        if piece.name not in SHOT_KIND and piece.name not in {"高道", "五里霧"}:
+        if piece.name not in SHOT_KIND:
             continue
         moved, _ = resolve_movement(board, base)
         shooter = moved.get(path[-1])
@@ -322,12 +389,14 @@ def resolve_movement(board, action):
     result = board.copy()
     captures = []
     origin = action.origin
-    for target in action.path:
+    shot_steps = action.shot_steps or (len(action.path),) * len(action.shots)
+    for step, target in enumerate(action.path, 1):
         land(result, origin, target, captures)
         origin = target
-    for target in action.shots:
-        captures.append(result.pop(target))
-        settle(result)
+        for victim, shot_step in zip(action.shots, shot_steps):
+            if shot_step == step:
+                captures.append(result.pop(victim))
+                settle(result)
     return result, captures
 
 
