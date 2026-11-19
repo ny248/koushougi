@@ -81,6 +81,57 @@ Apple SiliconでGPUを使う場合は `--device mps --inference-device mps` と�
 - `generation-001/candidate.json`、`training.json`、`evaluation.json` — 候補モデル、学習結果、比較結果。
 - `complete.json` — 全世代の結果。未完了の対局は勝ちや引き分けに換算しない。
 
+## 学習量と強さの推移を一括で測る
+
+このコマンドはローカルのPythonで実行し、OpenAI APIやチャットでの監視を使わない。
+
+`dqn_experiment` は現在のDouble DQNの学習目標を変えず、指定局数でモデルを保存し、開始時のモデルと自動対戦する。20・50・100局時点を比較する場合は次を実行する。
+
+```sh
+.venv/bin/python -B -u -m koushougi.dqn_experiment \
+  --output work/training/dqn-curve-01 \
+  --milestones 20 50 100 --seed 20261118 \
+  --seconds 2 --depth 3 --target-interval 100 \
+  --device cpu --workers 4
+```
+
+この例は学習100局と、各時点32局ずつ、合計96局の評価対戦を行う。報酬・NN構造・探索確率の減らし方などの条件を途中で変更せず、学習量による変化を見る。現行ルールで新しい実験を作り、過去の実験ディレクトリには追記しない。学習済みモデルから始める場合は `--model /path/to/model.json` を指定する。指定しなければ初期重みから始める。
+
+- 自己対戦の学習は1局ずつ進める。`--workers` は評価対戦の並列数。
+- 各時点の評価は、初期局面と乱数で4・8・12・16・20・24・32手進めた8局面、2種類の同点手選択seed、先後交換で32局。同じ開始局面とseedを全時点で使う。
+- 評価は両者ともCPUの倍精度でNN全体を計算し、固定深さ2、時間制限なし、候補数制限なし。ルールから勝敗を証明できた場合は浅い深さで終了できる。各手で合法手の列挙完了と探索深さを確認し、終了後に棋譜を再生照合する。
+- `--evaluation-depth`、`--evaluation-seeds`、`--evaluation-max-plies`、`--opening-plies` で評価条件を指定できる。`--max-plies` は学習対局の手数上限。
+- 実行コードを `source/` に固定する。再開時も固定コードを使い、条件やモデルの変更を検査する。学習率などは `train_dqn` と同名の引数で指定できる。
+- 通常の対局画面にモデルを自動採用しない。
+
+### 進捗確認と再開
+
+別の端末から、モデルを呼び出さずに進捗と集計を確認できる。
+
+```sh
+.venv/bin/python -B -m koushougi.dqn_experiment \
+  --output work/training/dqn-curve-01 --status
+```
+
+中断後は次のコマンドで再開する。学習は最後に保存したチェックポイントから、評価対戦は一手ごとの記録から続ける。学習の保存は既定で100手ごとと各局の終了時。`--checkpoint-every 20` などで頻度を変更できる。比較中に中断した場合は、比較を終えてから次の学習へ進む。二重起動は実験全体と評価対局ごとの実行ロックで防ぐ。
+
+```sh
+.venv/bin/python -B -u -m koushougi.dqn_experiment \
+  --output work/training/dqn-curve-01 --resume
+```
+
+### 結果ファイル
+
+- `summary.csv`、`summary.json`：学習局数、総手数、更新回数、勝敗、未決着数、決着局のみの勝率、開始局面単位の検定、モデルのパス。
+- `snapshots/game-000020/model.json`：20局時点のモデル。50局・100局も同じ形式。
+- 各snapshotの `training.json`、`evaluation.json`：学習記録と評価結果。
+- 各snapshotの `evaluation/`：対局別の進捗・一手ごとの盤面と着手・結果。移動途中の射撃段階も保存する。
+- `training/checkpoint.pt`：NN、目標値用NN、Adam、経験、盤面、乱数状態。
+- `config.json`、`initial.json`、`openings.json`、`source/`：実験の条件、開始モデル、開始局面、固定コード。
+- `progress.json`、`failure.json`、`complete.json`：現在の段階、失敗、完了結果。
+
+未決着や合法手なしは勝ち・負け・引き分けに換算しない。検定は同じ開始局面の複数局を独立とせず、開始局面単位でモデル名を交換する両側検定。`summary.csv` の各時点は同じ局面を使った成長の傾向の確認であり、互いに独立した実験ではない。1回の学習だけで学習法一般の強さを結論づけない。
+
 ## Double DQNによる自己対戦と学習
 
 `train_dqn` は自己対戦を進めながら、経験を保存して繰り返し学習する。対局に使うNNとαβ探索は同じで、学習用に別の対局AIを追加しない。

@@ -278,7 +278,7 @@ def restore_game(state):
     return game
 
 
-def train(output, config, *, device="cpu", model=None, resume=False):
+def train(output, config, *, device="cpu", model=None, resume=False, on_save=None):
     """呼出元がrun.lockを保持して実行する。再開時は保存時の条件を使う。"""
     rng = Random(config.seed)
     torch.manual_seed(config.seed)
@@ -339,6 +339,8 @@ def train(output, config, *, device="cpu", model=None, resume=False):
                   "epsilon": config.epsilon(steps), "last_td_loss": last_loss,
                   "skipped_no_legal_move": skipped, "results": results}
         save_json(output / "report.json", report)
+        if on_save is not None:
+            on_save(report)
         print(json.dumps({key: value for key, value in report.items()
                           if key not in ("config", "results", "source_sha256")}, ensure_ascii=False), flush=True)
 
