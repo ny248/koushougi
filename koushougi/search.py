@@ -1,12 +1,15 @@
 """指定された盤面評価と候補順を使うαβ探索。"""
 
+from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
 from time import monotonic
 
 from .game import outcome
+from .move_ordering import MoveOrdering
 
 WIN = 1_000_000
+DEFAULT_WIDTHS = (10, 5, 3)
 
 
 def terminal_score(board, side):
@@ -14,6 +17,12 @@ def terminal_score(board, side):
     if winner is None:
         return None
     return WIN if winner == side else -WIN
+
+
+def _game_terminal_score(game, side):
+    if getattr(game, "is_draw", False):
+        return 0
+    return terminal_score(game.board, side)
 
 
 @dataclass(frozen=True)
@@ -26,6 +35,78 @@ class SearchResult:
 
 class SearchTimeout(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class AlphaBetaReader:
+    """評価と候補の選び方を保持し、各局面を独立して読む。
+
+    widths は現在の手、相手の応手、次の手…で残す候補数。
+    指定した段数を超えたら最後の上限を使い、Noneなら全候補を読む。
+    capture_depth は通常の末端から駒を取る手だけを追加で読む深さ。
+    """
+
+    evaluator: Callable
+    widths: tuple[int, ...] | None = DEFAULT_WIDTHS
+    max_depth: int = 3
+    ordering: MoveOrdering | None = None
+    capture_depth: int = 0
+    candidate_limit: int | None = None
+
+    def __post_init__(self):
+        if self.widths is not None:
+            widths = tuple(self.widths)
+            if not widths or any(type(limit) is not int or limit < 1 for limit in widths):
+                raise ValueError("各段の候補数上限には正の整数を指定してください")
+            object.__setattr__(self, "widths", widths)
+        if self.ordering is None:
+            object.__setattr__(self, "ordering", MoveOrdering(self.evaluator))
+
+    def width_at(self, ply):
+        return self.widths[min(ply, len(self.widths) - 1)] if self.widths else None
+
+    def analyze(self, game, time_limit=2.0):
+        """局面を変更せず、今回の制限時間内に得た探索結果を返す。"""
+        return _analyze(game, self, time_limit)
+
+
+def alpha_beta(game, *, evaluator, ordering, time_limit=2.0, candidate_limit=None, max_depth=3,
+               capture_depth=0, branch_limits=None):
+    """従来の引数による呼び出しを読み手へ渡す。"""
+    return AlphaBetaReader(evaluator=evaluator, ordering=ordering, widths=branch_limits,
+                           max_depth=max_depth, capture_depth=capture_depth,
+                           candidate_limit=candidate_limit).analyze(game, time_limit=time_limit)
+
+
+def _limited_children(game, side, deadline, preferred, evaluator, ordering, limit):
+    """全合法手を採点し、手番側から見た上位だけを次の探索へ渡す。"""
+    children, pending = [], []
+
+    def flush():
+        if monotonic() >= deadline:
+            raise SearchTimeout
+        games = [child for _, child, terminal in pending if terminal is None]
+        values = iter(_many(ordering.position_score, games, side)) if games else iter(())
+        for move, child, terminal in pending:
+            score = terminal if terminal is not None else next(values)
+            static = score if terminal is not None or ordering.position_score is evaluator else None
+            children.append((score, move, child, static))
+        pending.clear()
+
+    for move, child in game.successors():
+        if monotonic() >= deadline:
+            raise SearchTimeout
+        pending.append((move, child, _game_terminal_score(child, side)))
+        if len(pending) >= _batch_size(ordering.position_score):
+            flush()
+    if pending:
+        flush()
+    children.sort(key=lambda row: row[0], reverse=game.turn == side)
+    truncated = len(children) > limit
+    selected = [(move, child, static) for _, move, child, static in children[:limit]]
+    if preferred is not None:
+        selected.sort(key=lambda row: row[0] != preferred)
+    return selected, truncated
 
 
 def _many(evaluator, games, side):
@@ -51,7 +132,7 @@ def _ordered_children(game, side, depth, deadline, preferred, evaluator, orderin
     leaves = []
 
     def evaluated_leaves():
-        terminal = [terminal_score(child.board, side) for _, child in leaves]
+        terminal = [_game_terminal_score(child, side) for _, child in leaves]
         pending = [child for (_, child), score in zip(leaves, terminal) if score is None]
         values = iter(_many(evaluator, pending, side)) if pending else iter(())
         return [(move, child, next(values) if score is None else score)
@@ -73,7 +154,7 @@ def _ordered_children(game, side, depth, deadline, preferred, evaluator, orderin
             continue
         if monotonic() >= deadline:
             raise SearchTimeout
-        terminal = terminal_score(child.board, side)
+        terminal = _game_terminal_score(child, side)
         if terminal == (WIN if maximizing else -WIN):
             yield move, child, terminal
             return
@@ -102,7 +183,7 @@ def _capture_search(game, side, remaining, alpha, beta, deadline, evaluator, sco
     if monotonic() >= deadline:
         raise SearchTimeout
     if score is None:
-        score = terminal_score(game.board, side)
+        score = _game_terminal_score(game, side)
         if score is None:
             score = evaluator(game, side)
     if remaining == 0 or abs(score) == WIN:
@@ -124,28 +205,34 @@ def _capture_search(game, side, remaining, alpha, beta, deadline, evaluator, sco
     return score
 
 
-def _search(game, side, depth, alpha, beta, deadline, evaluator, ordering, *, static=None,
-            preferred=None, capture_depth=0):
+def _search(game, side, depth, alpha, beta, deadline, reader, *, static=None,
+            preferred=None, ply=1):
     if monotonic() >= deadline:
         raise SearchTimeout
     if static is None:
-        static = terminal_score(game.board, side)
+        static = _game_terminal_score(game, side)
     if static in (WIN, -WIN):
         return static, None
     if depth == 0:
-        score = evaluator(game, side) if static is None else static
-        if capture_depth:
-            score = _capture_search(game, side, capture_depth, alpha, beta, deadline, evaluator, score)
+        score = reader.evaluator(game, side) if static is None else static
+        if reader.capture_depth:
+            score = _capture_search(game, side, reader.capture_depth, alpha, beta, deadline,
+                                    reader.evaluator, score)
         return score, None
 
     maximizing = game.turn == side
     best = float("-inf") if maximizing else float("inf")
     reply = None
-    for move, child, child_score in _ordered_children(
-        game, side, depth, deadline, preferred, evaluator, ordering
-    ):
-        score, _ = _search(child, side, depth - 1, alpha, beta, deadline, evaluator, ordering,
-                           static=child_score, capture_depth=capture_depth)
+    limit = reader.width_at(ply)
+    if limit is None:
+        children = _ordered_children(game, side, depth, deadline, preferred, reader.evaluator, reader.ordering)
+        truncated = False
+    else:
+        children, truncated = _limited_children(game, side, deadline, preferred,
+                                                reader.evaluator, reader.ordering, limit)
+    for move, child, child_score in children:
+        score, _ = _search(child, side, depth - 1, alpha, beta, deadline, reader,
+                           static=child_score, ply=ply + 1)
         if maximizing:
             if score > best:
                 best, reply = score, move
@@ -157,18 +244,20 @@ def _search(game, side, depth, alpha, beta, deadline, evaluator, ordering, *, st
         if alpha >= beta or best == (WIN if maximizing else -WIN):
             break
     if reply is not None:
+        # 自分の手を省いた負け、相手の応手を省いた勝ちは証明できていない。
+        if truncated and best == (-WIN if maximizing else WIN):
+            best += 1 if maximizing else -1
         return best, reply
-    return (evaluator(game, side) if static is None else static), None
+    return (reader.evaluator(game, side) if static is None else static), None
 
 
-def alpha_beta(game, *, evaluator, ordering, time_limit=2.0, candidate_limit=None, max_depth=3,
-               capture_depth=0):
+def _analyze(game, reader, time_limit):
     """同評価の最善手と、制限時間内に完了した深さを返す。
 
     evaluator(game, side) は勝敗が未確定の局面に対して -WIN より大きく
     WIN より小さい整数を返す。勝敗点はルールに従って探索が付ける。
-    capture_depth は通常の探索の末端から敵駒を取る手だけを読む追加の深さ。
     """
+    evaluator, ordering = reader.evaluator, reader.ordering
     deadline = monotonic() + time_limit
     side = game.turn
     candidates = []
@@ -186,7 +275,7 @@ def alpha_beta(game, *, evaluator, ordering, time_limit=2.0, candidate_limit=Non
         buffered.clear()
 
     for move, child in game.successors():
-        terminal = terminal_score(child.board, side)
+        terminal = _game_terminal_score(child, side)
         buffered.append((move, child, terminal))
         if len(buffered) >= _batch_size(evaluator):
             flush()
@@ -208,18 +297,21 @@ def alpha_beta(game, *, evaluator, ordering, time_limit=2.0, candidate_limit=Non
 
     if ordering.root_priority is not None and monotonic() < deadline:
         ranked = ordering.rank_root(game, ranked)
-    if candidate_limit is not None:
-        ranked = ranked[:max(1, candidate_limit)]
+    if reader.candidate_limit is not None:
+        ranked = ranked[:max(1, reader.candidate_limit)]
+    root_limit = reader.width_at(0)
+    if root_limit is not None:
+        ranked = ranked[:root_limit]
+    root_truncated = len(ranked) < len(candidates)
     replies = {}
-    for depth in range(2, max_depth + 1):
+    for depth in range(2, reader.max_depth + 1):
         scores = []
         best = float("-inf")
         try:
             for _, move, child in ranked:
                 # 評価値は整数。最善手と同点の候補は枝刈りで落とさない。
                 score, reply = _search(child, side, depth - 1, best - 1, float("inf"), deadline,
-                                       evaluator, ordering, preferred=replies.get(move),
-                                       capture_depth=capture_depth)
+                                       reader, preferred=replies.get(move))
                 if ordering.use_previous_iteration:
                     replies[move] = reply
                 scores.append((score, move, child))
@@ -236,8 +328,8 @@ def alpha_beta(game, *, evaluator, ordering, time_limit=2.0, candidate_limit=Non
         if ordering.use_previous_iteration:
             ranked = sorted(scores, key=lambda item: item[0], reverse=True)
         result = SearchResult(moves, tuple(move for value, move, _ in scores if value == best),
-                              best, depth)
-        if abs(best) == WIN:
+                              -WIN + 1 if root_truncated and best == -WIN else best, depth)
+        if abs(result.score) == WIN:
             break
 
     return result

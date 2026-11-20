@@ -1,6 +1,7 @@
 """現行の駒価値で初期化する、線形経路と非線形経路を持つ局面評価NN。"""
 
 import json
+from functools import lru_cache
 from math import isfinite, tanh
 from random import Random
 
@@ -50,9 +51,11 @@ def initial_parameters(width=16, seed=0):
 class ValueNetwork:
     """保存したNNの重みをCPUとブラウザで評価する。"""
 
-    def __init__(self, parameters=None, *, width=16, seed=0):
+    def __init__(self, parameters=None, *, width=16, seed=0, cache_size=16384):
         if type(width) is not int or not 1 <= width <= 256:
             raise ValueError("NNの幅は1〜256にしてください")
+        if type(cache_size) is not int or cache_size < 0:
+            raise ValueError("評価値の保存件数は0以上の整数にしてください")
         self.width = width
         expected = initial_parameters(width, seed)
         source = expected if parameters is None else parameters
@@ -69,6 +72,12 @@ class ValueNetwork:
                 self.parameters[name] = tuple(tuple(self._number(value) for value in row) for row in values)
             else:
                 self.parameters[name] = tuple(self._number(value) for value in values)
+
+        # 重みを固定したこのモデルで、同じNN入力の評価値を思考間でも再利用する。
+        @lru_cache(maxsize=cache_size)
+        def cached_forward(encoded):
+            return self.forward(encoded)
+        self._cached_forward = cached_forward
 
     @staticmethod
     def _number(value):
@@ -90,7 +99,7 @@ class ValueNetwork:
         return linear + SCALE * nonlinear
 
     def score(self, game, side):
-        value = self.forward(encode_board(game.board, game.turn))
+        value = self._cached_forward(bytes(encode_board(game.board, game.turn)))
         score = round(value if side == game.turn else -value)
         return max(-WIN + 1, min(WIN - 1, score))
 

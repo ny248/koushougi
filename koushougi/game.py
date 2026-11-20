@@ -78,10 +78,37 @@ class Game:
     def __init__(self):
         self.board = Board(initial_state())
         self.turn = "black"
+        self._last_position = self.position_hash
+        self._position_counts = {self._last_position: 1}
+
+    @property
+    def position_hash(self):
+        board = self.board if isinstance(self.board, Board) else Board(self.board)
+        return (board.position_hash << 1) | (self.turn == "white")
+
+    def _sync_repetition(self):
+        current = self.position_hash
+        if current != self._last_position:
+            # 棋譜の途中局面やテスト用の盤面を直接設定した場合は、そこを起点にする。
+            self._position_counts = {current: 1}
+            self._last_position = current
+
+    @property
+    def repetition_count(self):
+        self._sync_repetition()
+        return self._position_counts[self._last_position]
+
+    @property
+    def is_draw(self):
+        return self.repetition_count >= 4
+
+    @property
+    def result(self):
+        return outcome(self.board) or ("draw" if self.is_draw else None)
 
     def actions(self, origin):
         piece = self.board.get(origin)
-        if piece is None or piece.side != self.turn or outcome(self.board):
+        if piece is None or piece.side != self.turn or self.result:
             return ()
         try:
             return movement_actions(self.board, origin)
@@ -131,6 +158,7 @@ class Game:
                         yield (action, True, linked), child
 
     def _finish_move(self, board, destination, promoted, linked):
+        self._sync_repetition()
         if linked and promoted != "軍師":
             raise ValueError("連動して成ることはできません")
         for cell in linked:
@@ -151,3 +179,7 @@ class Game:
             settle(board)
         self.board = board
         self.turn = "white" if self.turn == "black" else "black"
+        # 浅いコピーで作る探索の分岐と親局面で、カウンタを共有して変更しない。
+        self._position_counts = self._position_counts.copy()
+        self._last_position = self.position_hash
+        self._position_counts[self._last_position] = self._position_counts.get(self._last_position, 0) + 1

@@ -1,16 +1,19 @@
 <!doctype html>
-<html lang="ja" data-engine="browser" data-build="9a897794abbdf4f8">
+<html lang="ja" data-engine="browser" data-build="4a5d04ff3c60d326">
 <head>
 <meta charset="utf-8">
 <meta name="google-site-verification" content="2E92BkDQUVLerhS7V1t2kZnDCiFpEOtHvHcxaAKRvOk" />
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>広将棋</title>
+<title>広将棋 (beta版)｜無料で遊べるブラウザゲーム</title>
+<meta name="description" content="ブラウザで無料で遊べる広将棋ゲーム。19路盤と射撃などの独自ルールを楽しめます。AI対戦と、同じ端末での二人対戦に対応しています。">
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; background: #f4efe6; color: #28231d; font: 16px system-ui, sans-serif; }
   main { width: min(100%, 80rem); margin: auto; padding: 1.5rem; }
   header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
   h1 { margin: 0; font: bold 2rem serif; }
+  h1 small { font: 500 1rem system-ui, sans-serif; white-space: nowrap; }
+  .introduction { margin: .5rem 0 0; font-size: .9rem; line-height: 1.6; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 19rem;
     grid-template-areas: "board actions" "board guidance" "board details";
     grid-template-rows: 7.5rem 10rem minmax(0, 1fr); height: var(--board-height, auto);
@@ -91,9 +94,10 @@
 <body>
 <main>
   <header>
-    <h1>広将棋</h1>
+    <h1>広将棋 <small>(beta版)</small></h1>
     <button class="control" id="options" type="button" aria-haspopup="dialog" aria-controls="options-dialog">オプション</button>
   </header>
+  <p class="introduction">ブラウザで無料で遊べる広将棋ゲーム。AI対戦と二人対戦に対応しています。</p>
   <div class="layout">
     <section class="panel game-actions" aria-labelledby="game-actions-title">
       <h2 id="game-actions-title">対局操作</h2>
@@ -154,8 +158,7 @@
       <label>対局相手
         <select id="opponent" autofocus>
           <option value="human">人</option>
-          <option value="search">AI（初期モデル）</option>
-          <option value="trained">AI（学習済みモデル）</option>
+          <option value="trained">AI</option>
         </select>
       </label>
       <label id="toss-option" hidden>あなたの手番
@@ -189,6 +192,13 @@
       </div>
     </form>
   </dialog>
+  <dialog id="repetition-dialog" aria-labelledby="repetition-title">
+    <h2 id="repetition-title">千日手です</h2>
+    <p>同じ局面が4回現れたため、引き分けで対局終了です。</p>
+    <form method="dialog" class="actions">
+      <button class="control primary" type="submit" autofocus>閉じる</button>
+    </form>
+  </dialog>
 </main>
 <script>
   const files = [..."ABCDEFGHJKLMNOPQRST"];
@@ -210,6 +220,7 @@
   const resign = document.querySelector("#resign");
   const resignDialog = document.querySelector("#resign-dialog");
   const resignTitle = document.querySelector("#resign-title");
+  const repetitionDialog = document.querySelector("#repetition-dialog");
   let resignedSide;
   let gameActive = false;
 
@@ -437,7 +448,7 @@
 
   function record(move, before, quiet = false) {
     const piece = before.pieces[move.from];
-    const player = mode !== "human" && piece.side !== humanSide ? (mode === "trained" ? "学習済みAI（" : "AI（") + (piece.side === "black" ? "黒" : "白") + "）" : sideName(piece.side);
+    const player = mode !== "human" && piece.side !== humanSide ? "AI（" + (piece.side === "black" ? "黒" : "白") + "）" : sideName(piece.side);
     const route = moveSequence(move).reduce((text, event) =>
       text + (event.kind === "move" ? " → " : " ／ 射撃 ") + event.square, move.from);
     const promotion = move.promote ? " ／ 成り" : "";
@@ -594,7 +605,8 @@
     choices.replaceChildren();
     if (replay) {
       const atEnd = replay.index === replay.record.history.length;
-      const ending = current.winner ? sideName(current.winner) + "の勝ち。" :
+      const ending = current.draw ? "千日手です。引き分け。" :
+        current.winner ? sideName(current.winner) + "の勝ち。" :
         atEnd && replay.record.resignedSide ? sideName(replay.record.resignedSide) + "が投了。" :
         atEnd && replay.record.endReason === "ply_limit" ? "手数上限で打ち切り（未決着）。" :
         atEnd && replay.record.endReason === "no_legal_move" ? "合法手がなく終了。" : sideName(current.turn) + "の手番。";
@@ -602,6 +614,8 @@
     } else if (resignedSide) {
       const winner = resignedSide === "black" ? "white" : "black";
       status.textContent = sideName(resignedSide) + "が投了。" + sideName(winner) + "の勝ち。";
+    } else if (current.draw) {
+      status.textContent = "千日手です。引き分けで対局終了。";
     } else if (current.winner) {
       status.textContent = sideName(current.winner) + "の勝ち。対局終了。";
     } else if (!gameActive) {
@@ -609,7 +623,7 @@
         ? "対局終了。「新しい対局」で次の対局を始められます。"
         : "対局前です。「新しい対局」で始めてください。";
     } else if (thinking) {
-      status.textContent = mode === "trained" ? "学習済みAIが考え中…" : "AIが考え中…";
+      status.textContent = "AIが考え中…";
     } else if (mode !== "human" && current.turn !== humanSide) {
       status.textContent = "AIが指せる手はありません。";
     } else {
@@ -736,7 +750,7 @@
     }
     const opening = mode !== "human" && humanSide === "white" ? 1 : 0;
     undo.disabled = busy || !gameActive || Boolean(replay) || Boolean(resignedSide) || history.length <= opening;
-    resign.disabled = busy || !gameActive || Boolean(replay) || !current || Boolean(current.winner || resignedSide);
+    resign.disabled = busy || !gameActive || Boolean(replay) || !current || Boolean(current.winner || current.draw || resignedSide);
   }
 
   async function load(nextHistory, nextMode = mode, retryAI = false, nextSide = humanSide, startMatch = false) {
@@ -763,7 +777,7 @@
         current = response;
         history = nextHistory;
         if (startMatch) gameActive = true;
-        if (current.winner || !Object.values(current.moves).some(actions => actions.length)) gameActive = false;
+        if (current.winner || current.draw || !Object.values(current.moves).some(actions => actions.length)) gameActive = false;
         clearSelection();
         awaitingAI = gameActive && mode !== "human" && current.turn !== humanSide && !current.winner;
       }
@@ -777,7 +791,7 @@
           history = [...history, response.aiMove];
         }
         current = response;
-        if (current.winner || !Object.values(current.moves).some(actions => actions.length)) gameActive = false;
+        if (current.winner || current.draw || !Object.values(current.moves).some(actions => actions.length)) gameActive = false;
         draw();
       }
     } catch (error) {
@@ -791,6 +805,7 @@
     } finally {
       busy = false;
       updateGameActions();
+      if (!replay && current?.draw && !repetitionDialog.open) repetitionDialog.showModal();
     }
   }
 
@@ -825,7 +840,7 @@
 
   newGame.addEventListener("click", () => {
     if (busy || gameActive) return;
-    opponent.value = liveGame?.mode ?? mode;
+    opponent.value = (liveGame?.mode ?? mode) === "human" ? "human" : "trained";
     sideChoice.value = "black";
     replaceGameNote.hidden = history.length === 0;
     resetTossResult();
@@ -884,7 +899,8 @@
   function savedRecord() {
     return replay?.record ?? {
       format: "koushougi-kifu", version: 1, title: "広将棋 " + new Date().toLocaleString("ja-JP"),
-      history, opponent: mode, humanSide, resignedSide: resignedSide ?? null
+      history, opponent: mode, humanSide, resignedSide: resignedSide ?? null,
+      endReason: current?.draw ? "repetition" : null
     };
   }
   function pauseReplay() {

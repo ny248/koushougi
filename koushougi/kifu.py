@@ -18,7 +18,7 @@ def _cell(value):
 def _snapshot(game):
     return {"pieces": {f"{FILES[x]}{y + 1}": vars(piece)
                        for (x, y), piece in game.board.items()},
-            "turn": game.turn, "winner": outcome(game.board), "moves": {}}
+            "turn": game.turn, "winner": outcome(game.board), "draw": game.is_draw, "moves": {}}
 
 
 def replay_record(record):
@@ -35,7 +35,7 @@ def replay_record(record):
     human_side = record.get("humanSide", "black")
     resigned = record.get("resignedSide")
     end_reason = record.get("endReason")
-    if opponent not in ("human", "search", "trained") or human_side not in ("black", "white") or resigned not in (None, "black", "white") or end_reason not in (None, "win", "ply_limit", "no_legal_move"):
+    if opponent not in ("human", "search", "trained") or human_side not in ("black", "white") or resigned not in (None, "black", "white") or end_reason not in (None, "win", "ply_limit", "no_legal_move", "repetition"):
         raise ValueError("対局情報が不正です")
     game = Game()
     frames = [_snapshot(game)]
@@ -57,7 +57,11 @@ def replay_record(record):
             frames.append(_snapshot(game))
         except (ValueError, KeyError, TypeError, IndexError) as error:
             raise ValueError(f"{index}手目を適用できません") from error
-    if resigned and outcome(game.board):
+    if end_reason == "repetition" and not game.is_draw:
+        raise ValueError("千日手が成立していません")
+    if game.is_draw:
+        end_reason = "repetition"
+    if resigned and game.result:
         raise ValueError("終局後の投了は記録できません")
     return {"record": {"format": "koushougi-kifu", "version": 1,
                        "title": title, "note": note, "history": moves,

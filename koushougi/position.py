@@ -56,7 +56,7 @@ def position(history, *, ai=False, human_side="black"):
         game.play(Action(origin, path, shots, tuple(move.get("shot_steps", ()))),
                   promote, tuple(map(square, move.get("linked", []))))
     ai_move = None
-    if ai and game.turn != human_side and not outcome(game.board):
+    if ai and game.turn != human_side and not game.result:
         choice = (choose_search_move(game, model=trained_model()) if ai == "trained"
                   else choose_search_move(game))
         if choice is not None:
@@ -79,6 +79,7 @@ def position(history, *, ai=False, human_side="black"):
         "aiModel": ("trained" if ai == "trained" else "initial") if ai else None,
         "turn": game.turn,
         "winner": outcome(game.board),
+        "draw": game.is_draw,
         "pieces": {label(cell): vars(piece) for cell, piece in game.board.items()},
         "moves": {
             label(cell): [
